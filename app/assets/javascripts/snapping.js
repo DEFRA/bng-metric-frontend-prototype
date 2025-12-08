@@ -1,5 +1,6 @@
 //
 // Multi-layer snapping polygon drawing module for OS Open Zoomstack
+// Supports two modes: 'red-line-boundary' (single polygon) and 'habitat-parcels' (multiple polygons)
 //
 
 (function(window) {
@@ -26,6 +27,18 @@
   const SIMPLIFY_TOLERANCE = 0.25;
   const MAX_FEATURES_PER_REQUEST = 100;
 
+  // Parcel colors for habitat parcels mode
+  const PARCEL_COLORS = [
+    { stroke: 'rgba(29, 112, 184, 1)', fill: 'rgba(29, 112, 184, 0.2)' },    // Blue
+    { stroke: 'rgba(0, 112, 60, 1)', fill: 'rgba(0, 112, 60, 0.2)' },        // Green
+    { stroke: 'rgba(128, 51, 153, 1)', fill: 'rgba(128, 51, 153, 0.2)' },    // Purple
+    { stroke: 'rgba(212, 53, 28, 1)', fill: 'rgba(212, 53, 28, 0.2)' },      // Red
+    { stroke: 'rgba(255, 152, 0, 1)', fill: 'rgba(255, 152, 0, 0.2)' },      // Orange
+    { stroke: 'rgba(0, 150, 136, 1)', fill: 'rgba(0, 150, 136, 0.2)' },      // Teal
+    { stroke: 'rgba(233, 30, 99, 1)', fill: 'rgba(233, 30, 99, 0.2)' },      // Pink
+    { stroke: 'rgba(63, 81, 181, 1)', fill: 'rgba(63, 81, 181, 0.2)' },      // Indigo
+  ];
+
   // Module state
   let map = null;
   let snapIndexSource = null;
@@ -34,7 +47,13 @@
   let hoverLayer = null;
   let hoverSource = null;
   let drawSource = null;
+  let boundaryLayer = null;
+  let boundarySource = null;
   let dragPanInteraction = null;
+
+  // Configuration
+  let currentMode = 'red-line-boundary';  // 'red-line-boundary' or 'habitat-parcels'
+  let boundaryPolygon = null;  // The boundary geometry for habitat-parcels mode
 
   // Drawing state
   let isDrawing = false;
@@ -47,6 +66,11 @@
   let lastSnapCoord = null;
   let canClosePolygon = false;
   let snappingEnabled = true;
+  let boundarySnappingEnabled = true;  // Separate toggle for boundary snapping
+
+  // Habitat parcels mode - multiple polygons
+  let habitatParcels = [];  // Array of { feature, coords, vertices, colorIndex }
+  let currentParcelIndex = -1;  // Index of parcel being edited, -1 if drawing new
 
   // Editing state
   let draggedVertex = null;
@@ -62,14 +86,33 @@
   let lastFetchExtent = null;
   let isFetching = false;
 
+  // Callbacks
+  let onPolygonComplete = null;
+  let onParcelAdded = null;
+  let onParcelRemoved = null;
+  let onValidationError = null;
+
   /**
-   * Initialize the snapping system
+   * Initialize the snapping system with configuration
    * @param {ol.Map} olMap - OpenLayers map instance
+   * @param {Object} config - Configuration options
+   * @param {string} config.mode - 'red-line-boundary' or 'habitat-parcels'
+   * @param {Object} config.boundaryGeoJSON - GeoJSON boundary for habitat-parcels mode
+   * @param {Function} config.onPolygonComplete - Callback when polygon is completed
+   * @param {Function} config.onParcelAdded - Callback when parcel is added (habitat-parcels mode)
+   * @param {Function} config.onParcelRemoved - Callback when parcel is removed (habitat-parcels mode)
+   * @param {Function} config.onValidationError - Callback for validation errors
    */
-  function initSnapping(olMap) {
+  function initWithConfig(olMap, config = {}) {
     map = olMap;
+    currentMode = config.mode || 'red-line-boundary';
+    onPolygonComplete = config.onPolygonComplete || null;
+    onParcelAdded = config.onParcelAdded || null;
+    onParcelRemoved = config.onParcelRemoved || null;
+    onValidationError = config.onValidationError || null;
 
     console.log('=== Snapping System Initializing ===');
+    console.log('Mode:', currentMode);
     console.log('Map:', map);
     console.log('Using backend proxy for OS API');
     console.log('Layers to fetch:', SNAP_LAYERS);
@@ -93,9 +136,22 @@
     setupLayers();
     setupEventHandlers();
 
+    // Load boundary if provided (for habitat-parcels mode)
+    if (config.boundaryGeoJSON && currentMode === 'habitat-parcels') {
+      loadBoundary(config.boundaryGeoJSON);
+    }
+
     console.log('✓ Snapping system initialized successfully');
     console.log(`Min zoom for snapping: ${MIN_ZOOM_FOR_SNAP}`);
     console.log(`Current zoom: ${map.getView().getZoom()}`);
+  }
+
+  /**
+   * Initialize the snapping system (legacy method for backwards compatibility)
+   * @param {ol.Map} olMap - OpenLayers map instance
+   */
+  function initSnapping(olMap) {
+    initWithConfig(olMap, { mode: 'red-line-boundary' });
   }
 
   /**
@@ -110,6 +166,15 @@
       zIndex: 1
     });
     map.addLayer(snapIndexLayer);
+
+    // Boundary layer (for habitat-parcels mode - shows the red line boundary)
+    boundarySource = new ol.source.Vector();
+    boundaryLayer = new ol.layer.Vector({
+      source: boundarySource,
+      style: boundaryStyleFunction,
+      zIndex: 10
+    });
+    map.addLayer(boundaryLayer);
 
     // Hover marker layer (with dynamic styling)
     hoverSource = new ol.source.Vector();
@@ -145,6 +210,20 @@
   }
 
   /**
+   * Style function for the boundary layer (red-line boundary in habitat-parcels mode)
+   */
+  function boundaryStyleFunction(feature) {
+    return new ol.style.Style({
+      stroke: new ol.style.Stroke({
+        color: 'rgba(220, 0, 0, 1)',
+        width: 3,
+        lineDash: [10, 5]  // Dashed line for boundary
+      }),
+      fill: null  // No fill - only border
+    });
+  }
+
+  /**
    * Style function for drawing layer features
    */
   function styleFunction(feature) {
@@ -153,28 +232,28 @@
     if (type === 'vertex') {
       const isFirst = feature.get('isFirst');
       const isHighlighted = feature.get('highlighted');
-      const isHovered = feature.get('hovered');  // For edit mode hover
+      const isHovered = feature.get('hovered');
       const isBeingDragged = feature.get('dragging');
+      const colorIndex = feature.get('colorIndex') || 0;
       
       let radius = 5;
-      let fillColor = 'rgba(255, 100, 0, 0.8)';
+      let fillColor = currentMode === 'habitat-parcels' 
+        ? PARCEL_COLORS[colorIndex % PARCEL_COLORS.length].stroke 
+        : 'rgba(255, 100, 0, 0.8)';
       let strokeColor = 'white';
       let strokeWidth = 2;
       
       if (isBeingDragged) {
-        // Being dragged
         radius = 8;
         fillColor = 'rgba(0, 150, 255, 0.9)';
         strokeColor = 'blue';
         strokeWidth = 3;
       } else if (isHighlighted) {
-        // Ready to close polygon (first vertex during drawing)
         radius = 9;
         fillColor = 'rgba(255, 0, 0, 0.9)';
         strokeColor = 'rgba(200, 0, 0, 1)';
         strokeWidth = 3;
       } else if (isHovered && polygonComplete) {
-        // Hovering in edit mode
         radius = 7;
         fillColor = 'rgba(255, 150, 0, 0.9)';
         strokeColor = 'rgba(255, 200, 0, 1)';
@@ -192,29 +271,91 @@
         }),
         zIndex: isBeingDragged ? 300 : (isFirst ? 200 : 100)
       });
-    } else if (type === 'polygon') {
-      return new ol.style.Style({
-        stroke: new ol.style.Stroke({
-          color: 'rgba(220, 0, 0, 1)',  // Red stroke for "red-line boundary"
-          width: 3
-        }),
-        fill: new ol.style.Fill({
-          color: 'rgba(220, 0, 0, 0.15)'  // Red fill with low opacity
-        })
-      });
+    } else if (type === 'polygon' || type === 'parcel') {
+      const colorIndex = feature.get('colorIndex') || 0;
+      
+      if (currentMode === 'habitat-parcels') {
+        const colors = PARCEL_COLORS[colorIndex % PARCEL_COLORS.length];
+        return new ol.style.Style({
+          stroke: new ol.style.Stroke({
+            color: colors.stroke,
+            width: 3
+          }),
+          fill: new ol.style.Fill({
+            color: colors.fill
+          })
+        });
+      } else {
+        // Red-line boundary mode
+        return new ol.style.Style({
+          stroke: new ol.style.Stroke({
+            color: 'rgba(220, 0, 0, 1)',
+            width: 3
+          }),
+          fill: new ol.style.Fill({
+            color: 'rgba(220, 0, 0, 0.15)'
+          })
+        });
+      }
     } else if (type === 'ghost-vertex') {
-      // Temporary vertex shown when hovering over polygon edge
       return new ol.style.Style({
         image: new ol.style.Circle({
           radius: 5,
           fill: new ol.style.Fill({ color: 'rgba(255, 255, 255, 0.8)' }),
           stroke: new ol.style.Stroke({ 
-            color: 'rgba(220, 0, 0, 1)',
+            color: currentMode === 'habitat-parcels' ? 'rgba(29, 112, 184, 1)' : 'rgba(220, 0, 0, 1)',
             width: 2
           })
         }),
         zIndex: 150
       });
+    }
+  }
+
+  /**
+   * Load boundary polygon for habitat-parcels mode
+   * @param {Object} geojson - GeoJSON feature for the boundary
+   */
+  function loadBoundary(geojson) {
+    if (!geojson || currentMode !== 'habitat-parcels') {
+      console.warn('loadBoundary called but not in habitat-parcels mode or no geojson provided');
+      return;
+    }
+
+    console.log('Loading boundary polygon...');
+
+    try {
+      const format = new ol.format.GeoJSON();
+      
+      // Determine source projection from GeoJSON CRS or default to EPSG:3857
+      let dataProjection = 'EPSG:3857';
+      if (geojson.crs && geojson.crs.properties && geojson.crs.properties.name) {
+        dataProjection = geojson.crs.properties.name;
+      }
+
+      const feature = format.readFeature(geojson, {
+        dataProjection: dataProjection,
+        featureProjection: 'EPSG:3857'
+      });
+
+      feature.set('type', 'boundary');
+      boundarySource.clear();
+      boundarySource.addFeature(feature);
+
+      // Store the boundary polygon geometry for validation
+      boundaryPolygon = feature.getGeometry();
+
+      // Zoom to boundary extent with padding
+      const extent = boundaryPolygon.getExtent();
+      map.getView().fit(extent, {
+        padding: [50, 50, 50, 50],
+        duration: 500,
+        maxZoom: 16
+      });
+
+      console.log('✓ Boundary loaded and map zoomed to fit');
+    } catch (error) {
+      console.error('❌ Error loading boundary:', error);
     }
   }
 
@@ -233,7 +374,7 @@
     // Mouse move handler - update hover marker and live polygon
     map.on('pointermove', handlePointerMove);
 
-    // Click handler - place vertex or close polygon (use 'click' not 'singleclick' for immediate response)
+    // Click handler - place vertex or close polygon
     map.on('click', handleSingleClick);
 
     // Drag handlers for editing
@@ -251,14 +392,11 @@
    * Throttled fetch for snap data
    */
   function throttledFetchSnapData() {
-    console.log('throttledFetchSnapData called');
-    
     if (fetchTimeout) {
       clearTimeout(fetchTimeout);
     }
 
     fetchTimeout = setTimeout(() => {
-      console.log('Throttle delay complete, calling fetchSnapData()');
       fetchSnapData();
     }, FETCH_THROTTLE_MS);
   }
@@ -268,61 +406,45 @@
    */
   async function fetchSnapData() {
     const zoom = map.getView().getZoom();
-    console.log(`[fetchSnapData] Current zoom: ${zoom}, Min zoom: ${MIN_ZOOM_FOR_SNAP}`);
     
     if (zoom < MIN_ZOOM_FOR_SNAP) {
-      console.log(`⚠️  [fetchSnapData] Zoom too low (${zoom.toFixed(1)} < ${MIN_ZOOM_FOR_SNAP})`);
-      console.log(`⚠️  Zoom in to level ${MIN_ZOOM_FOR_SNAP} or higher to enable snapping`);
+      console.log(`⚠️  Zoom too low (${zoom.toFixed(1)} < ${MIN_ZOOM_FOR_SNAP}) - snapping disabled`);
       snapIndexSource.clear();
       return;
     }
 
     if (isFetching) {
-      console.log('[fetchSnapData] Already fetching, skipping');
       return;
     }
 
     const extent = map.getView().calculateExtent(map.getSize());
-    console.log('[fetchSnapData] Map extent (EPSG:3857):', extent);
     
-    // Check if we've already fetched this area
     if (lastFetchExtent && ol.extent.equals(extent, lastFetchExtent)) {
-      console.log('[fetchSnapData] Same extent as last fetch, skipping');
       return;
     }
 
-    console.log('[fetchSnapData] Starting WFS fetch for', SNAP_LAYERS.length, 'layers');
     lastFetchExtent = extent;
     isFetching = true;
 
     try {
-      // Clear existing snap data
       snapIndexSource.clear();
 
-      // Fetch all layers in parallel
       const fetchPromises = SNAP_LAYERS.map(typeName => 
         fetchLayerData(typeName, extent)
       );
 
       const results = await Promise.allSettled(fetchPromises);
       
-      // Process results
       const allFeatures = [];
       results.forEach((result, index) => {
         if (result.status === 'fulfilled' && result.value) {
           allFeatures.push(...result.value);
-        } else if (result.status === 'rejected') {
-          console.warn(`Failed to fetch ${SNAP_LAYERS[index]}:`, result.reason);
         }
       });
 
-      // Add features to snap index
       if (allFeatures.length > 0) {
         snapIndexSource.addFeatures(allFeatures);
         console.log(`✅ Loaded ${allFeatures.length} snap features - snapping is now active!`);
-        console.log('💡 Double-click anywhere to start drawing');
-      } else {
-        console.warn('⚠️  No snap features loaded. Try zooming into a different area or check API key permissions.');
       }
     } catch (error) {
       console.error('❌ Error fetching snap data:', error);
@@ -339,23 +461,18 @@
     let startIndex = 0;
     let hasMore = true;
 
-    // Convert extent from EPSG:3857 to EPSG:27700 (British National Grid)
-    // OS Features API works best with EPSG:27700
     let minCoord, maxCoord, bbox;
     
     try {
       minCoord = ol.proj.transform([extent[0], extent[1]], 'EPSG:3857', 'EPSG:27700');
       maxCoord = ol.proj.transform([extent[2], extent[3]], 'EPSG:3857', 'EPSG:27700');
-      
-      // bbox format for WFS: minX,minY,maxX,maxY in the specified CRS
       bbox = `${minCoord[0]},${minCoord[1]},${maxCoord[0]},${maxCoord[1]}`;
     } catch (error) {
       console.error(`❌ Failed to transform coordinates for ${typeName}:`, error);
-      console.error('Make sure EPSG:27700 projection is properly registered');
       return [];
     }
 
-    while (hasMore && startIndex < 1000) { // Safety limit
+    while (hasMore && startIndex < 1000) {
       const url = `${WFS_ENDPOINT}?` +
         `typeNames=${typeName}` +
         `&srsName=EPSG:27700` +
@@ -364,56 +481,32 @@
         `&count=${MAX_FEATURES_PER_REQUEST}` +
         `&startIndex=${startIndex}`;
 
-      // Debug logging
-      if (startIndex === 0) {
-        console.log(`Fetching ${typeName}:`, url);
-      }
-
       try {
         const response = await fetch(url);
         if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`HTTP ${response.status} for ${typeName}:`, errorText);
           throw new Error(`HTTP ${response.status}`);
         }
 
         const geojson = await response.json();
         
-        // Debug logging
-        if (startIndex === 0) {
-          console.log(`${typeName} returned ${geojson.features?.length || 0} features`);
-        }
-        
         if (geojson.features && geojson.features.length > 0) {
-          try {
-            // Parse with OpenLayers GeoJSON format
-            // Data comes in EPSG:27700, convert to EPSG:3857 for the map
-            const format = new ol.format.GeoJSON();
-            const olFeatures = format.readFeatures(geojson, {
-              dataProjection: 'EPSG:27700',
-              featureProjection: 'EPSG:3857'
-            });
+          const format = new ol.format.GeoJSON();
+          const olFeatures = format.readFeatures(geojson, {
+            dataProjection: 'EPSG:27700',
+            featureProjection: 'EPSG:3857'
+          });
 
-            // Process and simplify geometries
-            olFeatures.forEach(feature => {
-              const geom = feature.getGeometry();
-              if (geom) {
-                // Simplify for better performance
-                const simplified = geom.simplify(SIMPLIFY_TOLERANCE);
-                feature.setGeometry(simplified);
-                feature.set('layerType', typeName);
-              }
-            });
+          olFeatures.forEach(feature => {
+            const geom = feature.getGeometry();
+            if (geom) {
+              const simplified = geom.simplify(SIMPLIFY_TOLERANCE);
+              feature.setGeometry(simplified);
+              feature.set('layerType', typeName);
+            }
+          });
 
-            features.push(...olFeatures);
-          } catch (transformError) {
-            console.error(`❌ Failed to transform features for ${typeName}:`, transformError);
-            console.error('EPSG:27700 projection may not be properly registered');
-            hasMore = false;
-            break;
-          }
+          features.push(...olFeatures);
 
-          // Check if there are more features
           if (geojson.features.length < MAX_FEATURES_PER_REQUEST) {
             hasMore = false;
           } else {
@@ -423,15 +516,8 @@
           hasMore = false;
         }
       } catch (error) {
-        console.error(`Error fetching ${typeName} at startIndex ${startIndex}:`, error);
         hasMore = false;
       }
-    }
-
-    if (features.length > 0) {
-      console.log(`✓ Successfully loaded ${features.length} features from ${typeName}`);
-    } else {
-      console.warn(`✗ No features loaded from ${typeName}`);
     }
 
     return features;
@@ -449,39 +535,31 @@
     const snapCoord = findSnapPoint(coordinate);
     lastSnapCoord = snapCoord;
 
-    // Handle dragging a vertex
     if (isDragging && draggedVertex) {
       updateDraggedVertex(snapCoord);
       return;
     }
 
-    // Check if we actually snapped (coordinate changed)
     const didSnap = coordinate[0] !== snapCoord[0] || coordinate[1] !== snapCoord[1];
 
-    // Update hover marker with snap state (only during drawing)
     if (isDrawing) {
       updateHoverMarker(snapCoord, didSnap);
     }
 
-    // Update live polygon if drawing
     if (isDrawing && currentPolygonCoords.length > 0) {
       updateLivePolygon(snapCoord);
     }
 
-    // Check if hovering over first vertex (during drawing)
     if (isDrawing && currentPolygonCoords.length >= 3) {
       checkFirstVertexHover(evt.pixel);
     }
 
-    // Check if hovering over any vertex (in edit mode)
     if (polygonComplete && !isDrawing) {
       checkVertexHover(evt.pixel);
       
-      // Check if hovering over polygon edge (not over a vertex)
       if (!isOverVertex(evt.pixel)) {
         checkPolygonEdgeHover(evt.pixel, snapCoord);
       } else {
-        // Clear ghost vertex if hovering over a real vertex
         clearGhostVertex();
       }
     } else {
@@ -497,106 +575,138 @@
     } else if (polygonComplete && isOverVertex(evt.pixel)) {
       cursor = 'grab';
     } else if (polygonComplete && ghostVertex) {
-      cursor = 'copy';  // Indicate new point can be added
+      cursor = 'copy';
     }
     map.getTargetElement().style.cursor = cursor;
   }
 
   /**
    * Find the nearest snap point
+   * Checks OS features (if enabled), boundary (if enabled), and existing parcels (always in habitat-parcels mode)
    */
   function findSnapPoint(coordinate) {
-    // If snapping is disabled, return coordinate as-is
-    if (!snappingEnabled) {
-      return coordinate;
-    }
-
-    const features = snapIndexSource.getFeatures();
-    
-    if (features.length === 0) {
-      return coordinate;
-    }
-
     let minDistance = Infinity;
     let snapPoint = null;
-    let snappedToFeature = false;
 
     const pixelTolerance = SNAP_TOLERANCE_PX;
     const resolution = map.getView().getResolution();
     const tolerance = pixelTolerance * resolution;
+    const vertexTolerance = tolerance * 0.5;
 
-    // First pass: check all feature edges
-    features.forEach(feature => {
-      const geom = feature.getGeometry();
-      if (!geom) return;
+    // 1. Check OS features (if snapping enabled)
+    if (snappingEnabled) {
+      const features = snapIndexSource.getFeatures();
+      
+      // Check feature edges
+      features.forEach(feature => {
+        const geom = feature.getGeometry();
+        if (!geom) return;
 
-      const type = geom.getType();
+        const type = geom.getType();
 
-      if (type === 'LineString') {
-        const pt = geom.getClosestPoint(coordinate);
-        const dist = getDistance(coordinate, pt);
-        if (dist < minDistance && dist < tolerance) {
-          minDistance = dist;
-          snapPoint = pt;
-          snappedToFeature = true;
-        }
-      } else if (type === 'MultiLineString') {
-        geom.getLineStrings().forEach(line => {
-          const pt = line.getClosestPoint(coordinate);
+        if (type === 'LineString') {
+          const pt = geom.getClosestPoint(coordinate);
           const dist = getDistance(coordinate, pt);
           if (dist < minDistance && dist < tolerance) {
             minDistance = dist;
             snapPoint = pt;
-            snappedToFeature = true;
           }
-        });
-      } else if (type === 'Polygon') {
-        // Snap to outer ring
-        const ring = geom.getLinearRing(0);
-        const pt = ring.getClosestPoint(coordinate);
-        const dist = getDistance(coordinate, pt);
-        if (dist < minDistance && dist < tolerance) {
-          minDistance = dist;
-          snapPoint = pt;
-          snappedToFeature = true;
-        }
-      } else if (type === 'MultiPolygon') {
-        geom.getPolygons().forEach(poly => {
-          const ring = poly.getLinearRing(0);
+        } else if (type === 'MultiLineString') {
+          geom.getLineStrings().forEach(line => {
+            const pt = line.getClosestPoint(coordinate);
+            const dist = getDistance(coordinate, pt);
+            if (dist < minDistance && dist < tolerance) {
+              minDistance = dist;
+              snapPoint = pt;
+            }
+          });
+        } else if (type === 'Polygon') {
+          const ring = geom.getLinearRing(0);
           const pt = ring.getClosestPoint(coordinate);
           const dist = getDistance(coordinate, pt);
           if (dist < minDistance && dist < tolerance) {
             minDistance = dist;
             snapPoint = pt;
-            snappedToFeature = true;
+          }
+        } else if (type === 'MultiPolygon') {
+          geom.getPolygons().forEach(poly => {
+            const ring = poly.getLinearRing(0);
+            const pt = ring.getClosestPoint(coordinate);
+            const dist = getDistance(coordinate, pt);
+            if (dist < minDistance && dist < tolerance) {
+              minDistance = dist;
+              snapPoint = pt;
+            }
+          });
+        }
+      });
+
+      // Check OS feature vertices (higher priority)
+      features.forEach(feature => {
+        const geom = feature.getGeometry();
+        if (!geom) return;
+
+        const type = geom.getType();
+        const coords = geom.getCoordinates();
+        const vertices = flattenCoordinates(coords, type);
+        
+        vertices.forEach(vertex => {
+          const distance = getDistance(coordinate, vertex);
+          if (distance < minDistance && distance < vertexTolerance) {
+            minDistance = distance;
+            snapPoint = vertex;
           }
         });
+      });
+    }
+
+    // 2. Check boundary polygon (if boundary snapping enabled and in habitat-parcels mode)
+    if (boundarySnappingEnabled && currentMode === 'habitat-parcels' && boundaryPolygon) {
+      // Snap to boundary edges
+      const ring = boundaryPolygon.getLinearRing(0);
+      const pt = ring.getClosestPoint(coordinate);
+      const dist = getDistance(coordinate, pt);
+      if (dist < minDistance && dist < tolerance) {
+        minDistance = dist;
+        snapPoint = pt;
       }
-    });
 
-    // Second pass: check vertices (higher priority - smaller tolerance)
-    const vertexTolerance = tolerance * 0.5; // Prefer vertices
-    features.forEach(feature => {
-      const geom = feature.getGeometry();
-      if (!geom) return;
-
-      const type = geom.getType();
-      const coords = geom.getCoordinates();
-      const vertices = flattenCoordinates(coords, type);
-      
-      vertices.forEach(vertex => {
+      // Snap to boundary vertices (higher priority)
+      const boundaryCoords = boundaryPolygon.getCoordinates()[0];
+      boundaryCoords.forEach(vertex => {
         const distance = getDistance(coordinate, vertex);
         if (distance < minDistance && distance < vertexTolerance) {
           minDistance = distance;
           snapPoint = vertex;
-          snappedToFeature = true;
         }
       });
-    });
+    }
 
-    // If snapped, log it for debugging (only occasionally to avoid spam)
-    if (snappedToFeature && Math.random() < 0.05) {
-      console.log(`🎯 Snapped! Distance: ${minDistance.toFixed(2)}m, Tolerance: ${tolerance.toFixed(2)}m`);
+    // 3. Always snap to existing habitat parcels in habitat-parcels mode
+    if (currentMode === 'habitat-parcels' && habitatParcels.length > 0) {
+      habitatParcels.forEach(parcel => {
+        const parcelGeom = parcel.feature.getGeometry();
+        if (!parcelGeom) return;
+
+        // Snap to parcel edges
+        const ring = parcelGeom.getLinearRing(0);
+        const pt = ring.getClosestPoint(coordinate);
+        const dist = getDistance(coordinate, pt);
+        if (dist < minDistance && dist < tolerance) {
+          minDistance = dist;
+          snapPoint = pt;
+        }
+
+        // Snap to parcel vertices (higher priority)
+        const parcelCoords = parcelGeom.getCoordinates()[0];
+        parcelCoords.forEach(vertex => {
+          const distance = getDistance(coordinate, vertex);
+          if (distance < minDistance && distance < vertexTolerance) {
+            minDistance = distance;
+            snapPoint = vertex;
+          }
+        });
+      });
     }
 
     return snapPoint || coordinate;
@@ -653,28 +763,26 @@
    * Update live polygon while drawing
    */
   function updateLivePolygon(snapCoord) {
-    // Build temporary coordinates including hover position
     const tempCoords = [...currentPolygonCoords, snapCoord];
     
     if (tempCoords.length >= 2) {
-      // Remove old polygon feature
       if (polygonFeature) {
         drawSource.removeFeature(polygonFeature);
       }
 
-      // Create new polygon feature
       let geom;
       if (tempCoords.length === 2) {
-        // Show as line if only 2 points
         geom = new ol.geom.LineString(tempCoords);
       } else {
-        // Show as polygon
         geom = new ol.geom.Polygon([tempCoords]);
       }
 
+      const colorIndex = currentMode === 'habitat-parcels' ? habitatParcels.length : 0;
+
       polygonFeature = new ol.Feature({
         geometry: geom,
-        type: 'polygon'
+        type: 'polygon',
+        colorIndex: colorIndex
       });
       drawSource.addFeature(polygonFeature);
     }
@@ -722,44 +830,47 @@
       return;
     }
 
-    if (polygonComplete) {
+    // In red-line-boundary mode, only allow one polygon
+    if (currentMode === 'red-line-boundary' && polygonComplete) {
       console.warn('⚠️  A polygon already exists. Clear it first before drawing a new one.');
       return;
     }
 
-    // Start drawing mode
+    // In habitat-parcels mode, check if there's a boundary
+    if (currentMode === 'habitat-parcels' && !boundaryPolygon) {
+      console.warn('⚠️  No boundary loaded. Cannot draw parcels without a boundary.');
+      if (onValidationError) {
+        onValidationError('No boundary loaded. Please define a red line boundary first.');
+      }
+      return;
+    }
+
     isDrawing = true;
     currentPolygonCoords = [];
     placedVertices = [];
     canClosePolygon = false;
+    polygonComplete = false;
+    currentParcelIndex = -1;
 
-    console.log('✏️  Drawing mode started - hover cursor will now appear');
-    console.log('💡 Click to place first vertex (will snap to features)');
+    console.log('✏️  Drawing mode started');
   }
 
   /**
    * Handle click to place vertex or close polygon
    */
   function handleSingleClick(evt) {
-    // Don't handle click during/after drag or if not drawing
     if (isDragging || justFinishedDragging || !isDrawing) {
       return;
     }
 
-    // Check if clicking to close
     if (canClosePolygon && currentPolygonCoords.length >= 3) {
       closePolygon();
       return;
     }
 
-    // Place new vertex (first vertex if none placed yet)
     const snapCoord = lastSnapCoord || evt.coordinate;
     const isFirstVertex = currentPolygonCoords.length === 0;
     placeVertex(snapCoord, isFirstVertex);
-    
-    if (isFirstVertex) {
-      console.log('✓ First vertex placed (snapped)');
-    }
   }
 
   /**
@@ -768,12 +879,14 @@
   function placeVertex(coordinate, isFirst) {
     currentPolygonCoords.push([...coordinate]);
 
-    // Create vertex marker
+    const colorIndex = currentMode === 'habitat-parcels' ? habitatParcels.length : 0;
+
     const vertexFeature = new ol.Feature({
       geometry: new ol.geom.Point(coordinate),
       type: 'vertex',
       isFirst: isFirst,
-      highlighted: false
+      highlighted: false,
+      colorIndex: colorIndex
     });
 
     placedVertices.push(vertexFeature);
@@ -784,31 +897,37 @@
 
   /**
    * Close the polygon and finish drawing
+   * Note: Validation is NOT performed here - user can edit after closing.
+   * Validation happens when saving parcels.
    */
   function closePolygon() {
     if (currentPolygonCoords.length < 3) {
       return;
     }
 
-    // Close the ring by adding first coordinate at the end
+    // Close the ring
     const firstCoord = currentPolygonCoords[0];
     currentPolygonCoords.push([...firstCoord]);
 
-    // Update polygon feature with closed ring
+    // Create the completed polygon geometry
+    const completedPolygon = new ol.geom.Polygon([currentPolygonCoords]);
+
+    // Update polygon feature
     if (polygonFeature) {
       drawSource.removeFeature(polygonFeature);
     }
 
+    const colorIndex = currentMode === 'habitat-parcels' ? habitatParcels.length : 0;
+
     polygonFeature = new ol.Feature({
-      geometry: new ol.geom.Polygon([currentPolygonCoords]),
-      type: 'polygon'
+      geometry: completedPolygon,
+      type: currentMode === 'habitat-parcels' ? 'parcel' : 'polygon',
+      colorIndex: colorIndex
     });
     drawSource.addFeature(polygonFeature);
 
-    // Clear hover marker
     hoverSource.clear();
 
-    // Reset first vertex highlight
     if (placedVertices.length > 0) {
       placedVertices[0].set('highlighted', false);
       placedVertices[0].changed();
@@ -820,25 +939,271 @@
     isEditing = true;
 
     console.log('✅ Polygon closed:', currentPolygonCoords.length - 1, 'vertices');
-    console.log('💡 You can now edit the polygon by dragging vertices');
-    
-    // Update UI buttons to show Clear Polygon
-    updateUIForCompletePolygon();
-    
-    // Calculate and display area
+
+    // In habitat-parcels mode, store the parcel and allow drawing more
+    if (currentMode === 'habitat-parcels') {
+      const parcel = {
+        feature: polygonFeature,
+        coords: [...currentPolygonCoords],
+        vertices: [...placedVertices],
+        colorIndex: colorIndex
+      };
+      habitatParcels.push(parcel);
+      currentParcelIndex = habitatParcels.length - 1;
+
+      console.log(`✅ Parcel ${habitatParcels.length} added`);
+
+      // Check for validation warnings (but don't prevent adding)
+      const validationResult = validateParcel(completedPolygon, habitatParcels.length - 1);
+      if (!validationResult.valid) {
+        console.warn('⚠️ Parcel has validation issues:', validationResult.error);
+        if (onValidationError) {
+          onValidationError(`Warning: ${validationResult.error} You can edit the parcel before saving.`);
+        }
+      }
+
+      // Reset for next parcel
+      polygonComplete = false;
+      isEditing = false;
+      polygonFeature = null;
+      currentPolygonCoords = [];
+      placedVertices = [];
+
+      updateUIForHabitatParcels();
+
+      if (onParcelAdded) {
+        onParcelAdded(parcel, habitatParcels.length - 1);
+      }
+    } else {
+      updateUIForCompletePolygon();
+    }
+
     updateAreaDisplay();
+
+    if (onPolygonComplete) {
+      onPolygonComplete();
+    }
   }
 
   /**
-   * Get the drawn polygon as GeoJSON
+   * Validate a parcel polygon against boundary and existing parcels
+   * @param {ol.geom.Polygon} parcelGeom - The polygon to validate
+   * @param {number} skipIndex - Index of parcel to skip (when validating itself)
+   * @returns {Object} { valid: boolean, error: string|null }
+   */
+  function validateParcel(parcelGeom, skipIndex = -1) {
+    // Check if parcel is within boundary
+    if (boundaryPolygon) {
+      if (!isPolygonWithinBoundary(parcelGeom, boundaryPolygon)) {
+        return {
+          valid: false,
+          error: 'The parcel must be completely within the red line boundary.'
+        };
+      }
+    }
+
+    // Check for overlap with existing parcels (skip self if editing)
+    for (let i = 0; i < habitatParcels.length; i++) {
+      if (i === skipIndex) continue;  // Skip self
+      
+      const existingParcel = habitatParcels[i];
+      if (doPolygonsOverlap(parcelGeom, existingParcel.feature.getGeometry())) {
+        return {
+          valid: false,
+          error: `The parcel overlaps with parcel ${i + 1}. Parcels must not overlap.`
+        };
+      }
+    }
+
+    return { valid: true, error: null };
+  }
+
+  /**
+   * Validate all habitat parcels before saving
+   * @returns {Object} { valid: boolean, errors: string[] }
+   */
+  function validateAllParcels() {
+    const errors = [];
+
+    for (let i = 0; i < habitatParcels.length; i++) {
+      const parcel = habitatParcels[i];
+      const parcelGeom = parcel.feature.getGeometry();
+
+      // Check if parcel is within boundary
+      if (boundaryPolygon && !isPolygonWithinBoundary(parcelGeom, boundaryPolygon)) {
+        errors.push(`Parcel ${i + 1} extends outside the red line boundary.`);
+      }
+
+      // Check for overlap with other parcels
+      for (let j = i + 1; j < habitatParcels.length; j++) {
+        const otherParcel = habitatParcels[j];
+        if (doPolygonsOverlap(parcelGeom, otherParcel.feature.getGeometry())) {
+          errors.push(`Parcel ${i + 1} overlaps with parcel ${j + 1}.`);
+        }
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors: errors
+    };
+  }
+
+  /**
+   * Check if a polygon is completely within another polygon (boundary)
+   * @param {ol.geom.Polygon} innerPolygon - The polygon to check
+   * @param {ol.geom.Polygon} boundaryPolygon - The boundary polygon
+   * @returns {boolean}
+   */
+  function isPolygonWithinBoundary(innerPolygon, outerPolygon) {
+    // Get all coordinates of the inner polygon
+    const innerCoords = innerPolygon.getCoordinates()[0];
+    
+    // Check that every vertex of the inner polygon is inside the outer polygon
+    for (let i = 0; i < innerCoords.length - 1; i++) {
+      const coord = innerCoords[i];
+      if (!outerPolygon.intersectsCoordinate(coord)) {
+        return false;
+      }
+    }
+
+    // Additionally check that the inner polygon doesn't extend outside
+    // by checking if the intersection equals the inner polygon
+    const innerExtent = innerPolygon.getExtent();
+    const outerExtent = outerPolygon.getExtent();
+    
+    // Quick extent check first
+    if (!ol.extent.containsExtent(outerExtent, innerExtent)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Check if two polygons overlap
+   * @param {ol.geom.Polygon} polygon1 
+   * @param {ol.geom.Polygon} polygon2 
+   * @returns {boolean}
+   */
+  function doPolygonsOverlap(polygon1, polygon2) {
+    // Quick extent check first
+    const extent1 = polygon1.getExtent();
+    const extent2 = polygon2.getExtent();
+    
+    if (!ol.extent.intersects(extent1, extent2)) {
+      return false;
+    }
+
+    // Check if any vertex of polygon1 is inside polygon2
+    const coords1 = polygon1.getCoordinates()[0];
+    for (let i = 0; i < coords1.length - 1; i++) {
+      // Check if point is strictly inside (not on boundary)
+      if (isPointInsidePolygon(coords1[i], polygon2)) {
+        return true;
+      }
+    }
+
+    // Check if any vertex of polygon2 is inside polygon1
+    const coords2 = polygon2.getCoordinates()[0];
+    for (let i = 0; i < coords2.length - 1; i++) {
+      if (isPointInsidePolygon(coords2[i], polygon1)) {
+        return true;
+      }
+    }
+
+    // Check for edge intersections
+    if (doPolygonEdgesIntersect(polygon1, polygon2)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if a point is inside a polygon (not on the boundary)
+   */
+  function isPointInsidePolygon(point, polygon) {
+    // Use ray casting algorithm
+    const coords = polygon.getCoordinates()[0];
+    const x = point[0];
+    const y = point[1];
+    let inside = false;
+
+    for (let i = 0, j = coords.length - 2; i < coords.length - 1; j = i++) {
+      const xi = coords[i][0], yi = coords[i][1];
+      const xj = coords[j][0], yj = coords[j][1];
+
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+
+    return inside;
+  }
+
+  /**
+   * Check if edges of two polygons intersect
+   */
+  function doPolygonEdgesIntersect(polygon1, polygon2) {
+    const coords1 = polygon1.getCoordinates()[0];
+    const coords2 = polygon2.getCoordinates()[0];
+
+    for (let i = 0; i < coords1.length - 1; i++) {
+      const a1 = coords1[i];
+      const a2 = coords1[i + 1];
+
+      for (let j = 0; j < coords2.length - 1; j++) {
+        const b1 = coords2[j];
+        const b2 = coords2[j + 1];
+
+        if (doLineSegmentsIntersect(a1, a2, b1, b2)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if two line segments intersect (excluding endpoints touching)
+   */
+  function doLineSegmentsIntersect(a1, a2, b1, b2) {
+    const d1 = direction(b1, b2, a1);
+    const d2 = direction(b1, b2, a2);
+    const d3 = direction(a1, a2, b1);
+    const d4 = direction(a1, a2, b2);
+
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+        ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Helper for line segment intersection
+   */
+  function direction(p1, p2, p3) {
+    return (p3[0] - p1[0]) * (p2[1] - p1[1]) - (p2[0] - p1[0]) * (p3[1] - p1[1]);
+  }
+
+  /**
+   * Get the drawn polygon as GeoJSON (for red-line-boundary mode)
    * @returns {Object|null} GeoJSON Polygon in EPSG:3857
    */
   function getDrawnPolygonGeoJSON() {
+    if (currentMode === 'habitat-parcels') {
+      console.warn('Use getHabitatParcelsGeoJSON() for habitat-parcels mode');
+      return null;
+    }
+
     if (currentPolygonCoords.length < 4) {
       return null;
     }
 
-    // Ensure ring is closed
     const coords = [...currentPolygonCoords];
     const first = coords[0];
     const last = coords[coords.length - 1];
@@ -864,14 +1229,58 @@
   }
 
   /**
-   * Handle pointer down - start dragging vertex or insert new vertex
+   * Get all habitat parcels as GeoJSON FeatureCollection
+   * @returns {Object} GeoJSON FeatureCollection
+   */
+  function getHabitatParcelsGeoJSON() {
+    const features = habitatParcels.map((parcel, index) => {
+      const coords = [...parcel.coords];
+      const first = coords[0];
+      const last = coords[coords.length - 1];
+      
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        coords.push([...first]);
+      }
+
+      // Calculate area
+      const geom = parcel.feature.getGeometry();
+      const areaSqMeters = geom.getArea();
+      const areaHectares = areaSqMeters / 10000;
+
+      return {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [coords]
+        },
+        properties: {
+          parcelIndex: index,
+          areaHectares: areaHectares,
+          areaSqMeters: areaSqMeters
+        }
+      };
+    });
+
+    return {
+      type: 'FeatureCollection',
+      features: features,
+      crs: {
+        type: 'name',
+        properties: {
+          name: 'EPSG:3857'
+        }
+      }
+    };
+  }
+
+  /**
+   * Handle pointer down - start dragging vertex
    */
   function handlePointerDown(evt) {
     if (!polygonComplete || isDrawing) {
       return;
     }
 
-    // Check if clicking on ghost vertex (to insert new vertex)
     if (ghostVertex && ghostVertexCoord && ghostVertexInsertIndex >= 0) {
       insertNewVertex(ghostVertexCoord, ghostVertexInsertIndex);
       clearGhostVertex();
@@ -880,7 +1289,6 @@
       return;
     }
 
-    // Check if clicking on a vertex
     const feature = map.forEachFeatureAtPixel(evt.pixel, (feature) => {
       if (feature.get('type') === 'vertex') {
         return feature;
@@ -891,7 +1299,6 @@
     });
 
     if (feature) {
-      // Start dragging this vertex
       draggedVertex = feature;
       draggedVertexIndex = placedVertices.indexOf(feature);
       isDragging = true;
@@ -899,15 +1306,10 @@
       feature.set('dragging', true);
       feature.changed();
       
-      console.log(`🎯 Dragging vertex ${draggedVertexIndex}`);
-      
-      // Disable map panning to allow vertex dragging
       if (dragPanInteraction) {
         dragPanInteraction.setActive(false);
-        console.log('🔒 Map panning disabled for vertex editing');
       }
       
-      // Stop the event from propagating to map interactions
       evt.stopPropagation();
       evt.preventDefault();
     }
@@ -921,27 +1323,21 @@
       return;
     }
 
-    // Finish dragging
     draggedVertex.set('dragging', false);
     draggedVertex.changed();
     
-    console.log(`✓ Vertex ${draggedVertexIndex} moved to new position`);
-    
-    // Re-enable map panning
     if (dragPanInteraction) {
       dragPanInteraction.setActive(true);
-      console.log('🔓 Map panning re-enabled');
     }
     
     isDragging = false;
     draggedVertex = null;
     draggedVertexIndex = -1;
     
-    // Set flag to prevent immediate click after drag
     justFinishedDragging = true;
     setTimeout(() => {
       justFinishedDragging = false;
-    }, 50);  // 50ms delay
+    }, 50);
   }
 
   /**
@@ -952,28 +1348,20 @@
       return;
     }
 
-    // Update the vertex feature position
     draggedVertex.getGeometry().setCoordinates(snapCoord);
-
-    // Update the coordinate in the array
     currentPolygonCoords[draggedVertexIndex] = [...snapCoord];
     
-    // If it's the first vertex, also update the closing coordinate
     if (draggedVertexIndex === 0) {
       currentPolygonCoords[currentPolygonCoords.length - 1] = [...snapCoord];
-    }
-    // If it's the last coordinate (closing point), update first vertex
-    else if (draggedVertexIndex === currentPolygonCoords.length - 1) {
+    } else if (draggedVertexIndex === currentPolygonCoords.length - 1) {
       currentPolygonCoords[0] = [...snapCoord];
       placedVertices[0].getGeometry().setCoordinates(snapCoord);
     }
 
-    // Update the polygon geometry
     if (polygonFeature) {
       polygonFeature.getGeometry().setCoordinates([currentPolygonCoords]);
     }
     
-    // Update area display
     updateAreaDisplay();
   }
 
@@ -981,7 +1369,6 @@
    * Check if hovering over any vertex in edit mode
    */
   function checkVertexHover(pixel) {
-    // Clear all hover states first
     placedVertices.forEach(v => {
       if (v.get('hovered')) {
         v.set('hovered', false);
@@ -989,7 +1376,6 @@
       }
     });
 
-    // Check if hovering over a vertex
     const feature = map.forEachFeatureAtPixel(pixel, (feature) => {
       if (feature.get('type') === 'vertex') {
         return feature;
@@ -1030,9 +1416,8 @@
       return;
     }
 
-    // Check if hovering over the polygon
     const feature = map.forEachFeatureAtPixel(pixel, (feature) => {
-      if (feature.get('type') === 'polygon') {
+      if (feature.get('type') === 'polygon' || feature.get('type') === 'parcel') {
         return feature;
       }
     }, {
@@ -1041,7 +1426,6 @@
     });
 
     if (feature) {
-      // Find closest point on polygon edge
       const geometry = feature.getGeometry();
       const ring = geometry.getCoordinates()[0];
       
@@ -1049,12 +1433,10 @@
       let closestPoint = null;
       let insertIndex = -1;
 
-      // Check each edge segment
       for (let i = 0; i < ring.length - 1; i++) {
         const start = ring[i];
         const end = ring[i + 1];
         
-        // Create line segment
         const line = new ol.geom.LineString([start, end]);
         const closestOnSegment = line.getClosestPoint(snapCoord);
         const distance = getDistance(snapCoord, closestOnSegment);
@@ -1062,12 +1444,11 @@
         if (distance < minDistance) {
           minDistance = distance;
           closestPoint = closestOnSegment;
-          insertIndex = i + 1;  // Insert after this vertex
+          insertIndex = i + 1;
         }
       }
 
-      // Show ghost vertex if close enough to edge
-      if (closestPoint && minDistance < 50) {  // 50 map units tolerance
+      if (closestPoint && minDistance < 50) {
         showGhostVertex(closestPoint, insertIndex);
       } else {
         clearGhostVertex();
@@ -1112,53 +1493,143 @@
   function insertNewVertex(coordinate, insertIndex) {
     console.log(`➕ Inserting new vertex at index ${insertIndex}`);
 
-    // Insert coordinate into array
     currentPolygonCoords.splice(insertIndex, 0, [...coordinate]);
 
-    // Create new vertex feature
+    const colorIndex = polygonFeature ? polygonFeature.get('colorIndex') : 0;
+
     const newVertexFeature = new ol.Feature({
       geometry: new ol.geom.Point(coordinate),
       type: 'vertex',
       isFirst: false,
       highlighted: false,
-      hovered: false
+      hovered: false,
+      colorIndex: colorIndex
     });
 
-    // Insert into placedVertices array
     placedVertices.splice(insertIndex, 0, newVertexFeature);
     drawSource.addFeature(newVertexFeature);
 
-    // Update first vertex flag (only first one should have it)
     placedVertices.forEach((v, idx) => {
       v.set('isFirst', idx === 0);
     });
 
-    // Update the closing coordinate to match first vertex
     currentPolygonCoords[currentPolygonCoords.length - 1] = [...currentPolygonCoords[0]];
 
-    // Update the polygon geometry
     if (polygonFeature) {
       polygonFeature.getGeometry().setCoordinates([currentPolygonCoords]);
     }
 
-    // Update area display
     updateAreaDisplay();
-
-    console.log(`✓ New vertex added. Total vertices: ${placedVertices.length}`);
   }
 
   /**
-   * Update UI buttons when polygon is complete
+   * Update UI buttons when polygon is complete (red-line-boundary mode)
    */
   function updateUIForCompletePolygon() {
     const startButton = document.getElementById('start-drawing');
     const cancelButton = document.getElementById('cancel-drawing');
     const clearButton = document.getElementById('clear-polygon');
+    const saveButton = document.getElementById('save-boundary');
     
-    if (startButton && cancelButton && clearButton) {
-      startButton.style.display = 'none';
-      cancelButton.style.display = 'none';
-      clearButton.style.display = 'inline-block';
+    if (startButton) startButton.style.display = 'none';
+    if (cancelButton) cancelButton.style.display = 'none';
+    if (clearButton) clearButton.style.display = 'inline-block';
+    if (saveButton) saveButton.disabled = false;
+  }
+
+  /**
+   * Update UI for habitat-parcels mode
+   */
+  function updateUIForHabitatParcels() {
+    const startButton = document.getElementById('start-drawing');
+    const cancelButton = document.getElementById('cancel-drawing');
+    const saveParcelsButton = document.getElementById('save-parcels');
+    
+    if (startButton) startButton.style.display = 'inline-block';
+    if (cancelButton) cancelButton.style.display = 'none';
+    if (saveParcelsButton) saveParcelsButton.disabled = habitatParcels.length === 0;
+
+    updateParcelsList();
+    updateTotalArea();
+  }
+
+  /**
+   * Update the parcels list UI
+   */
+  function updateParcelsList() {
+    const listElement = document.getElementById('parcels-list-items');
+    if (!listElement) return;
+
+    if (habitatParcels.length === 0) {
+      listElement.innerHTML = '<li class="govuk-body-s" style="color: #505a5f;">No parcels drawn yet</li>';
+      return;
+    }
+
+    listElement.innerHTML = habitatParcels.map((parcel, index) => {
+      const geom = parcel.feature.getGeometry();
+      const areaSqMeters = geom.getArea();
+      const areaHectares = (areaSqMeters / 10000).toFixed(2);
+      const colors = PARCEL_COLORS[parcel.colorIndex % PARCEL_COLORS.length];
+
+      return `
+        <li class="govuk-body-s" style="display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #b1b4b6;">
+          <span style="display: flex; align-items: center;">
+            <span style="width: 16px; height: 16px; background: ${colors.fill}; border: 2px solid ${colors.stroke}; margin-right: 8px;"></span>
+            Parcel ${index + 1}: ${areaHectares} ha
+          </span>
+          <button type="button" class="govuk-link" style="color: #d4351c; cursor: pointer; border: none; background: none;" onclick="window.SnapDrawing.removeParcel(${index})">
+            Remove
+          </button>
+        </li>
+      `;
+    }).join('');
+  }
+
+  /**
+   * Update total area display
+   */
+  function updateTotalArea() {
+    const totalAreaElement = document.getElementById('total-area');
+    if (!totalAreaElement) return;
+
+    const totalArea = habitatParcels.reduce((sum, parcel) => {
+      const geom = parcel.feature.getGeometry();
+      return sum + geom.getArea();
+    }, 0);
+
+    const totalHectares = (totalArea / 10000).toFixed(2);
+    totalAreaElement.textContent = totalHectares;
+  }
+
+  /**
+   * Remove a parcel by index
+   * @param {number} index - Index of parcel to remove
+   */
+  function removeParcel(index) {
+    if (index < 0 || index >= habitatParcels.length) {
+      console.warn('Invalid parcel index:', index);
+      return;
+    }
+
+    const parcel = habitatParcels[index];
+
+    // Remove feature from map
+    drawSource.removeFeature(parcel.feature);
+
+    // Remove vertices from map
+    parcel.vertices.forEach(v => {
+      drawSource.removeFeature(v);
+    });
+
+    // Remove from array
+    habitatParcels.splice(index, 1);
+
+    console.log(`🗑️ Parcel ${index + 1} removed`);
+
+    updateUIForHabitatParcels();
+
+    if (onParcelRemoved) {
+      onParcelRemoved(index);
     }
   }
 
@@ -1174,27 +1645,37 @@
       return;
     }
 
+    if (currentMode === 'habitat-parcels') {
+      // In habitat parcels mode, show area during drawing
+      if (isDrawing && currentPolygonCoords.length >= 3) {
+        const tempPolygon = new ol.geom.Polygon([[...currentPolygonCoords, currentPolygonCoords[0]]]);
+        const areaSqMeters = tempPolygon.getArea();
+        const areaHectares = areaSqMeters / 10000;
+        const areaInAcres = areaSqMeters / 4046.86;
+        
+        areaValue.textContent = areaHectares.toFixed(2);
+        areaAcres.textContent = areaInAcres.toFixed(2);
+        areaDisplay.style.display = 'block';
+      } else {
+        areaDisplay.style.display = 'none';
+      }
+      return;
+    }
+
+    // Red-line boundary mode
     if (!polygonFeature || !polygonComplete) {
       areaDisplay.style.display = 'none';
       return;
     }
 
-    // Calculate area in square meters
     const geometry = polygonFeature.getGeometry();
     const areaSqMeters = geometry.getArea();
-    
-    // Convert to hectares (1 hectare = 10,000 square meters)
     const areaHectares = areaSqMeters / 10000;
-    
-    // Convert to acres (1 acre = 4046.86 square meters)
     const areaInAcres = areaSqMeters / 4046.86;
     
-    // Display values
     areaValue.textContent = areaHectares.toFixed(2);
     areaAcres.textContent = areaInAcres.toFixed(2);
     areaDisplay.style.display = 'block';
-    
-    console.log(`📏 Area: ${areaHectares.toFixed(2)} ha (${areaInAcres.toFixed(2)} acres)`);
   }
 
   /**
@@ -1204,12 +1685,12 @@
     const startButton = document.getElementById('start-drawing');
     const cancelButton = document.getElementById('cancel-drawing');
     const clearButton = document.getElementById('clear-polygon');
+    const saveButton = document.getElementById('save-boundary');
     
-    if (startButton && cancelButton && clearButton) {
-      startButton.style.display = 'inline-block';
-      cancelButton.style.display = 'none';
-      clearButton.style.display = 'none';
-    }
+    if (startButton) startButton.style.display = 'inline-block';
+    if (cancelButton) cancelButton.style.display = 'none';
+    if (clearButton) clearButton.style.display = 'none';
+    if (saveButton) saveButton.disabled = true;
   }
 
   /**
@@ -1222,29 +1703,36 @@
 
     isDrawing = false;
     canClosePolygon = false;
-    currentPolygonCoords = [];
-    placedVertices = [];
     
-    drawSource.clear();
-    hoverSource.clear();
+    // Remove placed vertices
+    placedVertices.forEach(v => {
+      drawSource.removeFeature(v);
+    });
+    placedVertices = [];
+    currentPolygonCoords = [];
     
     if (polygonFeature) {
+      drawSource.removeFeature(polygonFeature);
       polygonFeature = null;
     }
+    
+    hoverSource.clear();
 
-    // Ensure map panning is re-enabled
     if (dragPanInteraction && !dragPanInteraction.getActive()) {
       dragPanInteraction.setActive(true);
     }
 
     console.log('Drawing cancelled');
     
-    // Reset UI buttons
-    resetDrawingButtons();
+    if (currentMode === 'habitat-parcels') {
+      updateUIForHabitatParcels();
+    } else {
+      resetDrawingButtons();
+    }
   }
 
   /**
-   * Clear the completed polygon
+   * Clear the completed polygon (red-line-boundary mode)
    */
   function clearPolygon() {
     isDrawing = false;
@@ -1261,25 +1749,39 @@
     hoverSource.clear();
     clearGhostVertex();
     
-    if (polygonFeature) {
-      polygonFeature = null;
-    }
+    polygonFeature = null;
 
-    // Ensure map panning is re-enabled
     if (dragPanInteraction && !dragPanInteraction.getActive()) {
       dragPanInteraction.setActive(true);
     }
 
-    // Hide area display
     const areaDisplay = document.getElementById('area-display');
     if (areaDisplay) {
       areaDisplay.style.display = 'none';
     }
 
-    console.log('✓ Polygon cleared - ready to draw a new one');
+    console.log('✓ Polygon cleared');
     
-    // Reset UI buttons to show Start Drawing
     resetDrawingButtons();
+  }
+
+  /**
+   * Clear all habitat parcels
+   */
+  function clearAllParcels() {
+    habitatParcels.forEach(parcel => {
+      drawSource.removeFeature(parcel.feature);
+      parcel.vertices.forEach(v => {
+        drawSource.removeFeature(v);
+      });
+    });
+
+    habitatParcels = [];
+    currentParcelIndex = -1;
+    
+    console.log('✓ All parcels cleared');
+    
+    updateUIForHabitatParcels();
   }
 
   /**
@@ -1291,56 +1793,57 @@
   }
 
   /**
-   * Test the WFS API with a simple request
-   * @param {string} testTypeName - Optional layer name to test
+   * Check if polygon is complete
+   * @returns {boolean}
    */
-  async function testWFSConnection(testTypeName = null) {
-    const typeName = testTypeName || SNAP_LAYERS[0];
-    const extent = map.getView().calculateExtent(map.getSize());
-    
-    console.log('=== WFS API Test ===');
-    console.log('Testing layer:', typeName);
-    console.log('Current zoom:', map.getView().getZoom());
-    console.log('Current extent (EPSG:3857):', extent);
-    
-    // Convert to EPSG:27700
-    const minCoord = ol.proj.transform([extent[0], extent[1]], 'EPSG:3857', 'EPSG:27700');
-    const maxCoord = ol.proj.transform([extent[2], extent[3]], 'EPSG:3857', 'EPSG:27700');
-    const bbox = `${minCoord[0]},${minCoord[1]},${maxCoord[0]},${maxCoord[1]}`;
-    
-    console.log('Extent (EPSG:27700):', bbox);
-    
-    const url = `${WFS_ENDPOINT}?` +
-      `typeNames=${typeName}` +
-      `&srsName=EPSG:27700` +
-      `&outputFormat=GEOJSON` +
-      `&bbox=${bbox},EPSG:27700` +
-      `&count=10`;
-    
-    console.log('Test URL:', url);
-    
-    try {
-      const response = await fetch(url);
-      console.log('Response status:', response.status);
-      
-      const data = await response.json();
-      console.log('Response data:', data);
-      console.log('Features returned:', data.features?.length || 0);
-      
-      if (data.features && data.features.length > 0) {
-        console.log('✓ API is working! First feature:', data.features[0]);
-      } else {
-        console.warn('✗ API returned no features. Try:');
-        console.warn('  1. Zoom to a different area (try London)');
-        console.warn('  2. Check if this layer type exists');
-        console.warn('  3. Try a different layer name');
-      }
-      
-      return data;
-    } catch (error) {
-      console.error('✗ API test failed:', error);
-      return null;
-    }
+  function isPolygonComplete() {
+    return polygonComplete;
+  }
+
+  /**
+   * Get number of habitat parcels
+   * @returns {number}
+   */
+  function getParcelCount() {
+    return habitatParcels.length;
+  }
+
+  /**
+   * Get current mode
+   * @returns {string}
+   */
+  function getMode() {
+    return currentMode;
+  }
+
+  /**
+   * Enable or disable snapping to OS features
+   */
+  function setSnappingEnabled(enabled) {
+    snappingEnabled = enabled;
+    console.log(enabled ? '🧲 OS feature snapping enabled' : '🚫 OS feature snapping disabled');
+  }
+
+  /**
+   * Check if OS feature snapping is currently enabled
+   */
+  function isSnappingEnabledFn() {
+    return snappingEnabled;
+  }
+
+  /**
+   * Enable or disable snapping to boundary
+   */
+  function setBoundarySnappingEnabled(enabled) {
+    boundarySnappingEnabled = enabled;
+    console.log(enabled ? '🧲 Boundary snapping enabled' : '🚫 Boundary snapping disabled');
+  }
+
+  /**
+   * Check if boundary snapping is currently enabled
+   */
+  function isBoundarySnappingEnabled() {
+    return boundarySnappingEnabled;
   }
 
   /**
@@ -1365,35 +1868,29 @@
     };
   }
 
-  /**
-   * Enable or disable snapping to features
-   */
-  function setSnappingEnabled(enabled) {
-    snappingEnabled = enabled;
-    console.log(enabled ? '🧲 Snapping enabled' : '🚫 Snapping disabled');
-  }
-
-  /**
-   * Check if snapping is currently enabled
-   */
-  function isSnappingEnabled() {
-    return snappingEnabled;
-  }
-
   // Export public API
   window.SnapDrawing = {
     initSnapping: initSnapping,
+    initWithConfig: initWithConfig,
+    loadBoundary: loadBoundary,
     startDrawing: startDrawing,
     cancelDrawing: cancelDrawing,
     clearPolygon: clearPolygon,
+    clearAllParcels: clearAllParcels,
+    removeParcel: removeParcel,
     getDrawnPolygonGeoJSON: getDrawnPolygonGeoJSON,
+    getHabitatParcelsGeoJSON: getHabitatParcelsGeoJSON,
     getCurrentPolygonCoords: getCurrentPolygonCoords,
-    testWFSConnection: testWFSConnection,
+    isPolygonComplete: isPolygonComplete,
+    getParcelCount: getParcelCount,
+    getMode: getMode,
     getSnapIndexInfo: getSnapIndexInfo,
     forceRefreshSnapData: fetchSnapData,
     setSnappingEnabled: setSnappingEnabled,
-    isSnappingEnabled: isSnappingEnabled
+    isSnappingEnabled: isSnappingEnabledFn,
+    setBoundarySnappingEnabled: setBoundarySnappingEnabled,
+    isBoundarySnappingEnabled: isBoundarySnappingEnabled,
+    validateAllParcels: validateAllParcels
   };
 
 })(window);
-

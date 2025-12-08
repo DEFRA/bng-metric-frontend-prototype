@@ -93,7 +93,37 @@ router.get('/api/os/features', async function (req, res) {
     const data = await response.json()
     res.json(data)
   } catch (error) {
-    console.error('Error fetching OS features:', error)
-    res.status(500).json({ error: 'Failed to fetch features' })
+    console.error('Error fetching OS features:', error);
+    res.status(500).json({ error: 'Failed to fetch features' });
   }
-})
+});
+
+// Red Line Boundary API Endpoints
+
+// Save red line boundary to session
+router.post('/api/save-red-line-boundary', function(req, res) {
+  req.session.data['redLineBoundary'] = req.body;
+  console.log('Red line boundary saved to session');
+  res.json({ success: true, redirect: '/on-site-habitat-baseline' });
+});
+
+// Get red line boundary from session
+router.get('/api/red-line-boundary', function(req, res) {
+  const boundary = req.session.data['redLineBoundary'] || null;
+  res.json(boundary);
+});
+
+// Habitat Parcels API Endpoints
+
+// Save habitat parcels to session
+router.post('/api/save-habitat-parcels', function(req, res) {
+  req.session.data['habitatParcels'] = req.body;
+  console.log('Habitat parcels saved to session');
+  res.json({ success: true, redirect: '/habitat-parcels-summary' });
+});
+
+// Get habitat parcels from session
+router.get('/api/habitat-parcels', function(req, res) {
+  const parcels = req.session.data['habitatParcels'] || null;
+  res.json(parcels);
+});

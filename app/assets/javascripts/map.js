@@ -1,13 +1,22 @@
 //
 // OpenLayers map initialization for Ordnance Survey Vector Tiles
+// Supports two modes: 'red-line-boundary' and 'habitat-parcels'
 //
 
 window.GOVUKPrototypeKit.documentReady(() => {
-  // Only initialize if we're on the map page
+  // Only initialize if we're on a map page
   const mapContainer = document.getElementById('map');
   if (!mapContainer) {
     return;
   }
+
+  // Read configuration from data attributes
+  const mode = mapContainer.dataset.mode || 'red-line-boundary';
+  const boundaryUrl = mapContainer.dataset.boundaryUrl || null;
+
+  console.log('=== Map Initialization ===');
+  console.log('Mode:', mode);
+  console.log('Boundary URL:', boundaryUrl);
 
   // Define the vector tile layer
   const vectorTileLayer = new ol.layer.VectorTile({
@@ -15,20 +24,19 @@ window.GOVUKPrototypeKit.documentReady(() => {
   });
 
   // Apply a style function to the vector tile layer
-  // Using backend proxy endpoint to keep API key secure
   olms.applyStyle(
     vectorTileLayer,
     '/api/os/tiles/style'
   );
 
-  // Define the UK extent in EPSG:3857 (for constraining the view)
+  // Define the UK extent in EPSG:3857
   const ukExtent = ol.proj.transformExtent(
     [ -10.76418, 49.528423, 1.9134116, 61.331151 ], 
     'EPSG:4326', 
     'EPSG:3857'
   );
 
-  // England center coordinates (approximately Leicestershire)
+  // England center coordinates
   const englandCenter = ol.proj.fromLonLat([-1.5, 52.5]);
 
   // Initialize the map object
@@ -39,25 +47,93 @@ window.GOVUKPrototypeKit.documentReady(() => {
       projection: 'EPSG:3857',
       extent: ukExtent,
       center: englandCenter,
-      zoom: 7,  // Zoom level that shows most of England
+      zoom: 7,
       minZoom: 6,
-      maxZoom: 16,  // Limit to zoom level 16 to prevent blank tiles
-      constrainResolution: true,  // Ensure resolution stays within available tile levels
-      smoothResolutionConstraint: true  // Smooth zooming experience
+      maxZoom: 16,
+      constrainResolution: true,
+      smoothResolutionConstraint: true
     })
   });
 
   // Set up zoom level display
   setupZoomDisplay(map);
 
-  // Initialize snapping system if available
-  if (window.SnapDrawing && window.SnapDrawing.initSnapping) {
-    window.SnapDrawing.initSnapping(map);
+  // Initialize based on mode
+  if (mode === 'habitat-parcels' && boundaryUrl) {
+    // Fetch boundary and initialize in habitat-parcels mode
+    initHabitatParcelsMode(map, boundaryUrl);
+  } else {
+    // Initialize in red-line-boundary mode
+    initRedLineBoundaryMode(map);
   }
 
-  // Set up UI control handlers
-  setupUIControls();
+  // Set up UI control handlers based on mode
+  setupUIControls(mode);
 });
+
+/**
+ * Initialize in red-line-boundary mode
+ */
+function initRedLineBoundaryMode(map) {
+  console.log('Initializing red-line-boundary mode...');
+  
+  if (window.SnapDrawing && window.SnapDrawing.initWithConfig) {
+    window.SnapDrawing.initWithConfig(map, {
+      mode: 'red-line-boundary',
+      onPolygonComplete: () => {
+        console.log('Polygon complete - save button enabled');
+      }
+    });
+  }
+}
+
+/**
+ * Initialize in habitat-parcels mode
+ */
+async function initHabitatParcelsMode(map, boundaryUrl) {
+  console.log('Initializing habitat-parcels mode...');
+  console.log('Fetching boundary from:', boundaryUrl);
+
+  try {
+    const response = await fetch(boundaryUrl);
+    const boundaryGeoJSON = await response.json();
+
+    if (!boundaryGeoJSON) {
+      console.error('No boundary data found. Redirecting to define boundary...');
+      showStatus('No boundary defined. Please define a red line boundary first.', 'error');
+      setTimeout(() => {
+        window.location.href = '/define-red-line-boundary';
+      }, 2000);
+      return;
+    }
+
+    console.log('Boundary loaded:', boundaryGeoJSON);
+
+    if (window.SnapDrawing && window.SnapDrawing.initWithConfig) {
+      window.SnapDrawing.initWithConfig(map, {
+        mode: 'habitat-parcels',
+        boundaryGeoJSON: boundaryGeoJSON,
+        onPolygonComplete: () => {
+          console.log('Parcel complete');
+        },
+        onParcelAdded: (parcel, index) => {
+          console.log(`Parcel ${index + 1} added`);
+          showStatus(`Parcel ${index + 1} added successfully`, 'success');
+        },
+        onParcelRemoved: (index) => {
+          console.log(`Parcel removed`);
+          showStatus('Parcel removed', 'info');
+        },
+        onValidationError: (error) => {
+          showStatus(error, 'error');
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error fetching boundary:', error);
+    showStatus('Error loading boundary. Please try again.', 'error');
+  }
+}
 
 /**
  * Set up zoom level display
@@ -94,148 +170,285 @@ function setupZoomDisplay(map) {
     }
   }
 
-  // Initial update
   updateZoomDisplay();
-
-  // Update on zoom change
   map.getView().on('change:resolution', updateZoomDisplay);
 }
 
 /**
  * Set up UI control button handlers
  */
-function setupUIControls() {
+function setupUIControls(mode) {
   const startButton = document.getElementById('start-drawing');
   const cancelButton = document.getElementById('cancel-drawing');
   const clearButton = document.getElementById('clear-polygon');
   const exportButton = document.getElementById('export-geojson');
   const snapCheckbox = document.getElementById('snap-enabled');
-  const statusMessage = document.getElementById('status-message');
-  const statusText = document.getElementById('status-text');
-
-  if (!startButton || !cancelButton || !clearButton || !exportButton) {
-    return;
-  }
+  const saveBoundaryButton = document.getElementById('save-boundary');
+  const saveParcelsButton = document.getElementById('save-parcels');
 
   // Start drawing button
-  startButton.addEventListener('click', () => {
-    if (window.SnapDrawing && window.SnapDrawing.startDrawing) {
-      window.SnapDrawing.startDrawing();
-      startButton.style.display = 'none';
-      cancelButton.style.display = 'inline-block';
-      showStatus('Drawing mode active - click to place vertices', 'info');
-    }
-  });
+  if (startButton) {
+    startButton.addEventListener('click', () => {
+      if (window.SnapDrawing && window.SnapDrawing.startDrawing) {
+        window.SnapDrawing.startDrawing();
+        startButton.style.display = 'none';
+        cancelButton.style.display = 'inline-block';
+        showStatus('Drawing mode active - click to place vertices', 'info');
+      }
+    });
+  }
 
   // Cancel drawing button
-  cancelButton.addEventListener('click', () => {
-    if (window.SnapDrawing && window.SnapDrawing.cancelDrawing) {
-      window.SnapDrawing.cancelDrawing();
-      startButton.style.display = 'inline-block';
-      cancelButton.style.display = 'none';
-      showStatus('Drawing cancelled', 'info');
-    }
-  });
+  if (cancelButton) {
+    cancelButton.addEventListener('click', () => {
+      if (window.SnapDrawing && window.SnapDrawing.cancelDrawing) {
+        window.SnapDrawing.cancelDrawing();
+        startButton.style.display = 'inline-block';
+        cancelButton.style.display = 'none';
+        showStatus('Drawing cancelled', 'info');
+      }
+    });
+  }
 
-  // Clear polygon button
-  clearButton.addEventListener('click', () => {
-    if (window.SnapDrawing && window.SnapDrawing.clearPolygon) {
-      window.SnapDrawing.clearPolygon();
-      showStatus('Polygon cleared - draw a new one', 'info');
-    }
-  });
+  // Clear polygon button (red-line-boundary mode)
+  if (clearButton) {
+    clearButton.addEventListener('click', () => {
+      if (window.SnapDrawing && window.SnapDrawing.clearPolygon) {
+        window.SnapDrawing.clearPolygon();
+        showStatus('Polygon cleared - draw a new one', 'info');
+      }
+    });
+  }
 
   // Export GeoJSON button
-  exportButton.addEventListener('click', () => {
-    if (window.SnapDrawing && window.SnapDrawing.getDrawnPolygonGeoJSON) {
-      const geojson = window.SnapDrawing.getDrawnPolygonGeoJSON();
-      
-      if (geojson) {
-        // Convert to EPSG:4326 for standard GeoJSON
-        const format = new ol.format.GeoJSON();
-        const feature = format.readFeature(geojson, {
-          dataProjection: 'EPSG:3857',
-          featureProjection: 'EPSG:3857'
-        });
+  if (exportButton) {
+    exportButton.addEventListener('click', () => {
+      if (window.SnapDrawing) {
+        let geojson;
         
-        const geojson4326 = format.writeFeatureObject(feature, {
-          dataProjection: 'EPSG:4326',
-          featureProjection: 'EPSG:3857'
-        });
+        if (mode === 'habitat-parcels' && window.SnapDrawing.getHabitatParcelsGeoJSON) {
+          geojson = window.SnapDrawing.getHabitatParcelsGeoJSON();
+          if (geojson.features.length === 0) {
+            showStatus('No parcels to export. Draw parcels first.', 'warning');
+            return;
+          }
+        } else if (window.SnapDrawing.getDrawnPolygonGeoJSON) {
+          geojson = window.SnapDrawing.getDrawnPolygonGeoJSON();
+          if (!geojson) {
+            showStatus('No polygon to export. Draw a polygon first.', 'warning');
+            return;
+          }
+        }
 
-        // Download as file
-        const blob = new Blob([JSON.stringify(geojson4326, null, 2)], { 
-          type: 'application/json' 
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'polygon-' + Date.now() + '.geojson';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        if (geojson) {
+          // Convert to EPSG:4326 for standard GeoJSON
+          const format = new ol.format.GeoJSON();
+          let exportData;
 
-        showStatus('GeoJSON exported successfully', 'success');
-        
-        // Also log to console for debugging
-        console.log('Exported GeoJSON (EPSG:4326):', geojson4326);
-      } else {
-        showStatus('No polygon to export. Draw a polygon first.', 'warning');
+          if (geojson.type === 'FeatureCollection') {
+            const features = geojson.features.map(f => {
+              const feature = format.readFeature(f, {
+                dataProjection: 'EPSG:3857',
+                featureProjection: 'EPSG:3857'
+              });
+              return format.writeFeatureObject(feature, {
+                dataProjection: 'EPSG:4326',
+                featureProjection: 'EPSG:3857'
+              });
+            });
+            exportData = { type: 'FeatureCollection', features: features };
+          } else {
+            const feature = format.readFeature(geojson, {
+              dataProjection: 'EPSG:3857',
+              featureProjection: 'EPSG:3857'
+            });
+            exportData = format.writeFeatureObject(feature, {
+              dataProjection: 'EPSG:4326',
+              featureProjection: 'EPSG:3857'
+            });
+          }
+
+          // Download as file
+          const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+            type: 'application/json' 
+          });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = (mode === 'habitat-parcels' ? 'parcels-' : 'boundary-') + Date.now() + '.geojson';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+
+          showStatus('GeoJSON exported successfully', 'success');
+        }
       }
-    }
-  });
+    });
+  }
 
-  // Snapping checkbox
+  // OS Features snapping checkbox
   if (snapCheckbox) {
     snapCheckbox.addEventListener('change', (e) => {
       if (window.SnapDrawing && window.SnapDrawing.setSnappingEnabled) {
         const enabled = e.target.checked;
         window.SnapDrawing.setSnappingEnabled(enabled);
-        showStatus(enabled ? 'Snapping enabled' : 'Snapping disabled', 'info');
+        showStatus(enabled ? 'OS feature snapping enabled' : 'OS feature snapping disabled', 'info');
       }
     });
   }
 
-  function showStatus(message, type) {
-    const statusTitle = document.getElementById('status-title');
-    
-    if (!statusMessage || !statusText || !statusTitle) {
-      return;
-    }
-
-    // Set message content
-    statusText.textContent = message;
-
-    // Update title and styling based on type
-    let title = 'Information';
-    let ariaLive = 'polite';
-    
-    // Remove any existing type classes
-    statusMessage.classList.remove('govuk-notification-banner--success');
-    
-    if (type === 'success') {
-      title = 'Success';
-      statusMessage.classList.add('govuk-notification-banner--success');
-      ariaLive = 'polite';
-    } else if (type === 'warning') {
-      title = 'Important';
-      ariaLive = 'assertive';
-    } else if (type === 'error') {
-      title = 'Error';
-      ariaLive = 'assertive';
-    }
-    
-    statusTitle.textContent = title;
-    statusMessage.setAttribute('aria-live', ariaLive);
-    statusMessage.setAttribute('aria-atomic', 'true');
-    
-    // Show notification
-    statusMessage.style.display = 'block';
-    
-    // Auto-hide after 5 seconds
-    setTimeout(() => {
-      statusMessage.style.display = 'none';
-    }, 5000);
+  // Boundary snapping checkbox (habitat-parcels mode only)
+  const snapBoundaryCheckbox = document.getElementById('snap-boundary-enabled');
+  if (snapBoundaryCheckbox) {
+    snapBoundaryCheckbox.addEventListener('change', (e) => {
+      if (window.SnapDrawing && window.SnapDrawing.setBoundarySnappingEnabled) {
+        const enabled = e.target.checked;
+        window.SnapDrawing.setBoundarySnappingEnabled(enabled);
+        showStatus(enabled ? 'Boundary snapping enabled' : 'Boundary snapping disabled', 'info');
+      }
+    });
   }
+
+  // Save boundary button (red-line-boundary mode)
+  if (saveBoundaryButton) {
+    saveBoundaryButton.addEventListener('click', async () => {
+      if (window.SnapDrawing && window.SnapDrawing.getDrawnPolygonGeoJSON) {
+        const geojson = window.SnapDrawing.getDrawnPolygonGeoJSON();
+        
+        if (!geojson) {
+          showStatus('No boundary to save. Draw a polygon first.', 'warning');
+          return;
+        }
+
+        try {
+          saveBoundaryButton.disabled = true;
+          saveBoundaryButton.textContent = 'Saving...';
+
+          const response = await fetch('/api/save-red-line-boundary', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(geojson)
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            showStatus('Boundary saved successfully! Redirecting...', 'success');
+            setTimeout(() => {
+              window.location.href = result.redirect;
+            }, 1000);
+          } else {
+            throw new Error('Save failed');
+          }
+        } catch (error) {
+          console.error('Error saving boundary:', error);
+          showStatus('Error saving boundary. Please try again.', 'error');
+          saveBoundaryButton.disabled = false;
+          saveBoundaryButton.textContent = 'Save Boundary';
+        }
+      }
+    });
+  }
+
+  // Save parcels button (habitat-parcels mode)
+  if (saveParcelsButton) {
+    saveParcelsButton.addEventListener('click', async () => {
+      if (window.SnapDrawing && window.SnapDrawing.getHabitatParcelsGeoJSON) {
+        const geojson = window.SnapDrawing.getHabitatParcelsGeoJSON();
+        
+        if (geojson.features.length === 0) {
+          showStatus('No parcels to save. Draw at least one parcel.', 'warning');
+          return;
+        }
+
+        // Validate all parcels before saving
+        if (window.SnapDrawing.validateAllParcels) {
+          const validation = window.SnapDrawing.validateAllParcels();
+          if (!validation.valid) {
+            const errorMsg = 'Cannot save parcels:\n• ' + validation.errors.join('\n• ');
+            showStatus(errorMsg, 'error');
+            console.error('Validation errors:', validation.errors);
+            return;
+          }
+        }
+
+        try {
+          saveParcelsButton.disabled = true;
+          saveParcelsButton.textContent = 'Saving...';
+
+          const response = await fetch('/api/save-habitat-parcels', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(geojson)
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            showStatus('Parcels saved successfully! Redirecting...', 'success');
+            setTimeout(() => {
+              window.location.href = result.redirect;
+            }, 1000);
+          } else {
+            throw new Error('Save failed');
+          }
+        } catch (error) {
+          console.error('Error saving parcels:', error);
+          showStatus('Error saving parcels. Please try again.', 'error');
+          saveParcelsButton.disabled = false;
+          saveParcelsButton.textContent = 'Save Parcels';
+        }
+      }
+    });
+  }
+}
+
+/**
+ * Show status message
+ */
+function showStatus(message, type) {
+  const statusMessage = document.getElementById('status-message');
+  const statusText = document.getElementById('status-text');
+  const statusTitle = document.getElementById('status-title');
+  
+  if (!statusMessage || !statusText || !statusTitle) {
+    console.log(`[${type}] ${message}`);
+    return;
+  }
+
+  statusText.textContent = message;
+
+  let title = 'Information';
+  let ariaLive = 'polite';
+  
+  statusMessage.classList.remove('govuk-notification-banner--success');
+  
+  if (type === 'success') {
+    title = 'Success';
+    statusMessage.classList.add('govuk-notification-banner--success');
+    ariaLive = 'polite';
+  } else if (type === 'warning') {
+    title = 'Important';
+    ariaLive = 'assertive';
+  } else if (type === 'error') {
+    title = 'Error';
+    ariaLive = 'assertive';
+  }
+  
+  statusTitle.textContent = title;
+  statusMessage.setAttribute('aria-live', ariaLive);
+  statusMessage.setAttribute('aria-atomic', 'true');
+  
+  statusMessage.style.display = 'block';
+  
+  // Auto-hide after 5 seconds (longer for errors)
+  const hideDelay = type === 'error' ? 8000 : 5000;
+  setTimeout(() => {
+    statusMessage.style.display = 'none';
+  }, hideDelay);
 }
