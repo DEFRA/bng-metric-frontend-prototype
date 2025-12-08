@@ -1,0 +1,173 @@
+{% extends "layouts/main.html" %}
+
+{% set pageName="WFS API Test" %}
+
+{% block pageTitle %}
+  WFS API Test - GOV.UK Prototype Kit
+{% endblock %}
+
+{% block beforeContent %}
+  <a href="/map" class="govuk-back-link">Back to Map</a>
+{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.6.0/ol.css" />
+  <style>
+    .test-result {
+      background: #f3f2f1;
+      padding: 20px;
+      margin: 20px 0;
+      border-left: 4px solid #1d70b8;
+      font-family: monospace;
+      font-size: 14px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .test-result.error {
+      border-left-color: #d4351c;
+      background: #fff5f5;
+    }
+    .test-result.success {
+      border-left-color: #00703c;
+      background: #f0f8f5;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+
+<div class="govuk-grid-row">
+  <div class="govuk-grid-column-two-thirds">
+    <h1 class="govuk-heading-xl">
+      WFS API Diagnostic Tool
+    </h1>
+    
+    <p class="govuk-body">
+      This page helps diagnose issues with the OS Features API and WFS requests.
+    </p>
+
+    <div class="govuk-form-group">
+      <label class="govuk-label" for="layer-select">
+        Select Layer to Test
+      </label>
+      <select class="govuk-select" id="layer-select">
+        <option value="Topography_TopographicArea">Topography_TopographicArea</option>
+        <option value="Topography_TopographicLine">Topography_TopographicLine</option>
+        <option value="Zoomstack_LocalBuildings">Zoomstack_LocalBuildings</option>
+        <option value="Zoomstack_RoadsLocal">Zoomstack_RoadsLocal</option>
+        <option value="Building">Building (NGD)</option>
+        <option value="Road">Road (NGD)</option>
+      </select>
+    </div>
+
+    <div class="govuk-form-group">
+      <label class="govuk-label" for="bbox-input">
+        Bounding Box (minX,minY,maxX,maxY in EPSG:27700)
+      </label>
+      <input class="govuk-input" id="bbox-input" type="text" 
+             value="530000,180000,531000,181000"
+             placeholder="530000,180000,531000,181000">
+      <div class="govuk-hint">
+        Default bbox is central London area
+      </div>
+    </div>
+
+    <div class="govuk-button-group">
+      <button type="button" class="govuk-button" id="test-button">
+        Test WFS Request
+      </button>
+      <button type="button" class="govuk-button govuk-button--secondary" id="test-all-button">
+        Test All Layers
+      </button>
+    </div>
+
+    <div id="result-container"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block pageScripts %}
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ol@v10.6.0/dist/ol.js"></script>
+  <script>
+    // Register EPSG:27700 (British National Grid) projection
+    proj4.defs('EPSG:27700', '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs');
+    ol.proj.proj4.register(proj4);
+    console.log('✓ EPSG:27700 projection registered for test page');
+    
+    // Use backend proxy endpoint to keep API key secure
+    const WFS_ENDPOINT = '/api/os/features';
+
+    document.getElementById('test-button').addEventListener('click', async () => {
+      const layer = document.getElementById('layer-select').value;
+      const bbox = document.getElementById('bbox-input').value;
+      await testLayer(layer, bbox);
+    });
+
+    document.getElementById('test-all-button').addEventListener('click', async () => {
+      const bbox = document.getElementById('bbox-input').value;
+      const layers = [
+        'Topography_TopographicArea',
+        'Topography_TopographicLine',
+        'Zoomstack_LocalBuildings',
+        'Zoomstack_RoadsLocal'
+      ];
+      
+      for (const layer of layers) {
+        await testLayer(layer, bbox);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    });
+
+    async function testLayer(typeName, bbox) {
+      const resultContainer = document.getElementById('result-container');
+      
+      const url = `${WFS_ENDPOINT}?` +
+        `typeNames=${typeName}` +
+        `&srsName=EPSG:27700` +
+        `&outputFormat=GEOJSON` +
+        `&bbox=${bbox},EPSG:27700` +
+        `&count=10`;
+
+      const resultDiv = document.createElement('div');
+      resultDiv.className = 'test-result';
+      
+      let html = `<strong>Testing: ${typeName}</strong>\n\n`;
+      html += `URL: ${url}\n\n`;
+      
+      try {
+        const startTime = performance.now();
+        const response = await fetch(url);
+        const endTime = performance.now();
+        
+        html += `Status: ${response.status} ${response.statusText}\n`;
+        html += `Time: ${(endTime - startTime).toFixed(0)}ms\n\n`;
+        
+        const data = await response.json();
+        
+        if (data.features && data.features.length > 0) {
+          resultDiv.classList.add('success');
+          html += `✓ SUCCESS! Found ${data.features.length} features\n\n`;
+          html += `First feature:\n${JSON.stringify(data.features[0], null, 2)}`;
+        } else {
+          resultDiv.classList.add('error');
+          html += `✗ No features returned\n\n`;
+          html += `Response:\n${JSON.stringify(data, null, 2)}`;
+        }
+        
+      } catch (error) {
+        resultDiv.classList.add('error');
+        html += `✗ ERROR: ${error.message}\n\n`;
+        html += error.stack;
+      }
+      
+      resultDiv.textContent = html;
+      resultContainer.insertBefore(resultDiv, resultContainer.firstChild);
+    }
+  </script>
+{% endblock %}
+

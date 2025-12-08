@@ -1,0 +1,8 @@
+{
+  "serviceName": "BNG Metric",
+  "plugins": {
+    "govuk-frontend": {
+      "rebrand": true
+    }
+  }
+}

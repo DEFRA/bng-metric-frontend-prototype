@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "dev": "govuk-prototype-kit dev",
+    "serve": "govuk-prototype-kit serve",
+    "start": "govuk-prototype-kit start"
+  },
+  "dependencies": {
+    "@govuk-prototype-kit/common-templates": "2.0.1",
+    "dotenv": "^17.2.3",
+    "govuk-frontend": "5.13.0",
+    "govuk-prototype-kit": "13.18.1",
+    "ol": "^10.7.0",
+    "ol-mapbox-style": "^13.1.1"
+  }
+}

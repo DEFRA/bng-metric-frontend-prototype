@@ -1,0 +1,52 @@
+//
+// For guidance on how to add CSS and SCSS see:
+// https://prototype-kit.service.gov.uk/docs/adding-css-javascript-and-images
+// 
+
+// Add extra styles here
+
+// OpenLayers map container styling
+.os-map-container {
+  width: 100%;
+  height: 600px;
+  border: 2px solid #b1b4b6;
+  margin-bottom: 20px;
+}
+
+// Status message - fixed position overlay with GOV.UK notification banner
+#status-message {
+  position: fixed;
+  top: 80px;  // Below GOV.UK header
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  max-width: 600px;
+  width: auto;
+  margin: 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  
+  // Ensure visibility on all backgrounds
+  .govuk-notification-banner__header {
+    border-bottom: 1px solid #1d70b8;
+  }
+  
+  .govuk-notification-banner__content {
+    background-color: #ffffff;
+  }
+
+  // Ensure proper contrast and readability
+  .govuk-notification-banner__heading {
+    margin-bottom: 0;
+    font-weight: 400;
+  }
+  
+  // Success state (optional - can be applied dynamically)
+  &.govuk-notification-banner--success {
+    border-color: #00703c;
+    
+    .govuk-notification-banner__header {
+      background-color: #00703c;
+      border-bottom-color: #00703c;
+    }
+  }
+}
