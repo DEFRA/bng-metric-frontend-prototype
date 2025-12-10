@@ -298,14 +298,50 @@ function setupUIControls(mode) {
     });
   }
 
-  // Boundary snapping checkbox (habitat-parcels mode only)
-  const snapBoundaryCheckbox = document.getElementById('snap-boundary-enabled');
-  if (snapBoundaryCheckbox) {
-    snapBoundaryCheckbox.addEventListener('change', (e) => {
-      if (window.SnapDrawing && window.SnapDrawing.setBoundarySnappingEnabled) {
+  // Boundary vertices snapping checkbox
+  const snapBoundaryVerticesCheckbox = document.getElementById('snap-boundary-vertices');
+  if (snapBoundaryVerticesCheckbox) {
+    snapBoundaryVerticesCheckbox.addEventListener('change', (e) => {
+      if (window.SnapDrawing && window.SnapDrawing.setSnapToBoundaryVertices) {
         const enabled = e.target.checked;
-        window.SnapDrawing.setBoundarySnappingEnabled(enabled);
-        showStatus(enabled ? 'Boundary snapping enabled' : 'Boundary snapping disabled', 'info');
+        window.SnapDrawing.setSnapToBoundaryVertices(enabled);
+        showStatus(enabled ? 'Boundary corner snapping enabled' : 'Boundary corner snapping disabled', 'info');
+      }
+    });
+  }
+
+  // Boundary edges snapping checkbox
+  const snapBoundaryEdgesCheckbox = document.getElementById('snap-boundary-edges');
+  if (snapBoundaryEdgesCheckbox) {
+    snapBoundaryEdgesCheckbox.addEventListener('change', (e) => {
+      if (window.SnapDrawing && window.SnapDrawing.setSnapToBoundaryEdges) {
+        const enabled = e.target.checked;
+        window.SnapDrawing.setSnapToBoundaryEdges(enabled);
+        showStatus(enabled ? 'Boundary edge snapping enabled' : 'Boundary edge snapping disabled', 'info');
+      }
+    });
+  }
+
+  // Parcel vertices snapping checkbox
+  const snapParcelVerticesCheckbox = document.getElementById('snap-parcel-vertices');
+  if (snapParcelVerticesCheckbox) {
+    snapParcelVerticesCheckbox.addEventListener('change', (e) => {
+      if (window.SnapDrawing && window.SnapDrawing.setSnapToParcelVertices) {
+        const enabled = e.target.checked;
+        window.SnapDrawing.setSnapToParcelVertices(enabled);
+        showStatus(enabled ? 'Parcel corner snapping enabled' : 'Parcel corner snapping disabled', 'info');
+      }
+    });
+  }
+
+  // Parcel edges snapping checkbox
+  const snapParcelEdgesCheckbox = document.getElementById('snap-parcel-edges');
+  if (snapParcelEdgesCheckbox) {
+    snapParcelEdgesCheckbox.addEventListener('change', (e) => {
+      if (window.SnapDrawing && window.SnapDrawing.setSnapToParcelEdges) {
+        const enabled = e.target.checked;
+        window.SnapDrawing.setSnapToParcelEdges(enabled);
+        showStatus(enabled ? 'Parcel edge snapping enabled' : 'Parcel edge snapping disabled', 'info');
       }
     });
   }

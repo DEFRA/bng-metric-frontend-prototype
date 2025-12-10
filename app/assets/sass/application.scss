@@ -11,6 +11,16 @@
   height: 600px;
   border: 2px solid #b1b4b6;
   margin-bottom: 20px;
+  position: relative;
+
+  // OS branding positioning fix
+  .os-api-branding {
+    pointer-events: none;
+    
+    a {
+      pointer-events: auto;  // Keep logo link clickable
+    }
+  }
 }
 
 // Status message - fixed position overlay with GOV.UK notification banner
