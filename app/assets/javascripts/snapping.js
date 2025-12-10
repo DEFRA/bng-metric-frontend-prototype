@@ -1,21 +1,17 @@
 //
-// Multi-layer snapping polygon drawing module for OS Open Zoomstack
+// Multi-layer snapping polygon drawing module for OS NGD
 // Supports two modes: 'red-line-boundary' (single polygon) and 'habitat-parcels' (multiple polygons)
 //
 
 (function(window) {
   'use strict';
 
-  // Zoomstack feature types - these DO work via Features API!
+  // OS NGD feature collections - Buildings, Roads, Rail, and Watercourses
   const SNAP_LAYERS = [
-    'Zoomstack_LocalBuildings',
-    'Zoomstack_Greenspace',
-    'Zoomstack_RoadsLocal',
-    'Zoomstack_RoadsRegional',
-    'Zoomstack_RoadsNational',
-    'Zoomstack_Waterlines',
-    'Zoomstack_Rail',
-    'Zoomstack_Woodland',
+    'bld-fts-building-1',        // Buildings
+    'trn-ntwk-roadlink-1',       // Roads
+    'trn-ntwk-railwaylink-1',    // Railways
+    'wtr-ntwk-waterlink-1',      // Watercourses
   ];
 
   // Use the backend proxy endpoint for OS Features API
@@ -561,9 +557,9 @@
   /**
    * Fetch a single layer's data with pagination
    */
-  async function fetchLayerData(typeName, extent) {
+  async function fetchLayerData(collectionId, extent) {
     const features = [];
-    let startIndex = 0;
+    let offset = 0;
     let hasMore = true;
 
     let minCoord, maxCoord, bbox;
@@ -573,18 +569,17 @@
       maxCoord = ol.proj.transform([extent[2], extent[3]], 'EPSG:3857', 'EPSG:27700');
       bbox = `${minCoord[0]},${minCoord[1]},${maxCoord[0]},${maxCoord[1]}`;
     } catch (error) {
-      console.error(`❌ Failed to transform coordinates for ${typeName}:`, error);
+      console.error(`❌ Failed to transform coordinates for ${collectionId}:`, error);
       return [];
     }
 
-    while (hasMore && startIndex < 1000) {
-      const url = `${WFS_ENDPOINT}?` +
-        `typeNames=${typeName}` +
-        `&srsName=EPSG:27700` +
-        `&outputFormat=GEOJSON` +
-        `&bbox=${bbox},EPSG:27700` +
-        `&count=${MAX_FEATURES_PER_REQUEST}` +
-        `&startIndex=${startIndex}`;
+    while (hasMore && offset < 1000) {
+      const url = `${WFS_ENDPOINT}/${collectionId}/items?` +
+        `bbox=${bbox}` +
+        `&bbox-crs=http://www.opengis.net/def/crs/EPSG/0/27700` +
+        `&crs=http://www.opengis.net/def/crs/EPSG/0/27700` +
+        `&limit=${MAX_FEATURES_PER_REQUEST}` +
+        `&offset=${offset}`;
 
       try {
         const response = await fetch(url);
@@ -606,7 +601,7 @@
             if (geom) {
               const simplified = geom.simplify(SIMPLIFY_TOLERANCE);
               feature.setGeometry(simplified);
-              feature.set('layerType', typeName);
+              feature.set('layerType', collectionId);
             }
           });
 
@@ -615,7 +610,7 @@
           if (geojson.features.length < MAX_FEATURES_PER_REQUEST) {
             hasMore = false;
           } else {
-            startIndex += MAX_FEATURES_PER_REQUEST;
+            offset += MAX_FEATURES_PER_REQUEST;
           }
         } else {
           hasMore = false;
@@ -1142,11 +1137,18 @@
       console.log(`✅ Parcel ${habitatParcels.length} added`);
 
       // Check for validation warnings (but don't prevent adding)
-      const validationResult = validateParcel(completedPolygon, habitatParcels.length - 1);
-      if (!validationResult.valid) {
-        console.warn('⚠️ Parcel has validation issues:', validationResult.error);
-        if (onValidationError) {
-          onValidationError(`Warning: ${validationResult.error} You can edit the parcel before saving.`);
+      if (window.ParcelValidation && window.ParcelValidation.validateParcel) {
+        const validationResult = window.ParcelValidation.validateParcel(
+          completedPolygon, 
+          boundaryPolygon, 
+          habitatParcels, 
+          habitatParcels.length - 1
+        );
+        if (!validationResult.valid) {
+          console.warn('⚠️ Parcel has validation issues:', validationResult.error);
+          if (onValidationError) {
+            onValidationError(`Warning: ${validationResult.error} You can edit the parcel before saving.`);
+          }
         }
       }
 
@@ -1174,208 +1176,16 @@
   }
 
   /**
-   * Validate a parcel polygon against boundary and existing parcels
-   * @param {ol.geom.Polygon} parcelGeom - The polygon to validate
-   * @param {number} skipIndex - Index of parcel to skip (when validating itself)
-   * @returns {Object} { valid: boolean, error: string|null }
-   */
-  function validateParcel(parcelGeom, skipIndex = -1) {
-    // Check if parcel is within boundary
-    if (boundaryPolygon) {
-      if (!isPolygonWithinBoundary(parcelGeom, boundaryPolygon)) {
-        return {
-          valid: false,
-          error: 'The parcel must be completely within the red line boundary.'
-        };
-      }
-    }
-
-    // Check for overlap with existing parcels (skip self if editing)
-    for (let i = 0; i < habitatParcels.length; i++) {
-      if (i === skipIndex) continue;  // Skip self
-      
-      const existingParcel = habitatParcels[i];
-      if (doPolygonsOverlap(parcelGeom, existingParcel.feature.getGeometry())) {
-        return {
-          valid: false,
-          error: `The parcel overlaps with parcel ${i + 1}. Parcels must not overlap.`
-        };
-      }
-    }
-
-    return { valid: true, error: null };
-  }
-
-  /**
    * Validate all habitat parcels before saving
+   * Wrapper function that calls the validation module with internal state
    * @returns {Object} { valid: boolean, errors: string[] }
    */
   function validateAllParcels() {
-    const errors = [];
-
-    for (let i = 0; i < habitatParcels.length; i++) {
-      const parcel = habitatParcels[i];
-      const parcelGeom = parcel.feature.getGeometry();
-
-      // Check if parcel is within boundary
-      if (boundaryPolygon && !isPolygonWithinBoundary(parcelGeom, boundaryPolygon)) {
-        errors.push(`Parcel ${i + 1} extends outside the red line boundary.`);
-      }
-
-      // Check for overlap with other parcels
-      for (let j = i + 1; j < habitatParcels.length; j++) {
-        const otherParcel = habitatParcels[j];
-        if (doPolygonsOverlap(parcelGeom, otherParcel.feature.getGeometry())) {
-          errors.push(`Parcel ${i + 1} overlaps with parcel ${j + 1}.`);
-        }
-      }
+    if (window.ParcelValidation && window.ParcelValidation.validateAllParcels) {
+      return window.ParcelValidation.validateAllParcels(habitatParcels, boundaryPolygon);
     }
-
-    return {
-      valid: errors.length === 0,
-      errors: errors
-    };
-  }
-
-  /**
-   * Check if a polygon is completely within another polygon (boundary)
-   * @param {ol.geom.Polygon} innerPolygon - The polygon to check
-   * @param {ol.geom.Polygon} boundaryPolygon - The boundary polygon
-   * @returns {boolean}
-   */
-  function isPolygonWithinBoundary(innerPolygon, outerPolygon) {
-    // Get all coordinates of the inner polygon
-    const innerCoords = innerPolygon.getCoordinates()[0];
-    
-    // Check that every vertex of the inner polygon is inside the outer polygon
-    for (let i = 0; i < innerCoords.length - 1; i++) {
-      const coord = innerCoords[i];
-      if (!outerPolygon.intersectsCoordinate(coord)) {
-        return false;
-      }
-    }
-
-    // Additionally check that the inner polygon doesn't extend outside
-    // by checking if the intersection equals the inner polygon
-    const innerExtent = innerPolygon.getExtent();
-    const outerExtent = outerPolygon.getExtent();
-    
-    // Quick extent check first
-    if (!ol.extent.containsExtent(outerExtent, innerExtent)) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Check if two polygons overlap
-   * @param {ol.geom.Polygon} polygon1 
-   * @param {ol.geom.Polygon} polygon2 
-   * @returns {boolean}
-   */
-  function doPolygonsOverlap(polygon1, polygon2) {
-    // Quick extent check first
-    const extent1 = polygon1.getExtent();
-    const extent2 = polygon2.getExtent();
-    
-    if (!ol.extent.intersects(extent1, extent2)) {
-      return false;
-    }
-
-    // Check if any vertex of polygon1 is inside polygon2
-    const coords1 = polygon1.getCoordinates()[0];
-    for (let i = 0; i < coords1.length - 1; i++) {
-      // Check if point is strictly inside (not on boundary)
-      if (isPointInsidePolygon(coords1[i], polygon2)) {
-        return true;
-      }
-    }
-
-    // Check if any vertex of polygon2 is inside polygon1
-    const coords2 = polygon2.getCoordinates()[0];
-    for (let i = 0; i < coords2.length - 1; i++) {
-      if (isPointInsidePolygon(coords2[i], polygon1)) {
-        return true;
-      }
-    }
-
-    // Check for edge intersections
-    if (doPolygonEdgesIntersect(polygon1, polygon2)) {
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if a point is inside a polygon (not on the boundary)
-   */
-  function isPointInsidePolygon(point, polygon) {
-    // Use ray casting algorithm
-    const coords = polygon.getCoordinates()[0];
-    const x = point[0];
-    const y = point[1];
-    let inside = false;
-
-    for (let i = 0, j = coords.length - 2; i < coords.length - 1; j = i++) {
-      const xi = coords[i][0], yi = coords[i][1];
-      const xj = coords[j][0], yj = coords[j][1];
-
-      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
-        inside = !inside;
-      }
-    }
-
-    return inside;
-  }
-
-  /**
-   * Check if edges of two polygons intersect
-   */
-  function doPolygonEdgesIntersect(polygon1, polygon2) {
-    const coords1 = polygon1.getCoordinates()[0];
-    const coords2 = polygon2.getCoordinates()[0];
-
-    for (let i = 0; i < coords1.length - 1; i++) {
-      const a1 = coords1[i];
-      const a2 = coords1[i + 1];
-
-      for (let j = 0; j < coords2.length - 1; j++) {
-        const b1 = coords2[j];
-        const b2 = coords2[j + 1];
-
-        if (doLineSegmentsIntersect(a1, a2, b1, b2)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if two line segments intersect (excluding endpoints touching)
-   */
-  function doLineSegmentsIntersect(a1, a2, b1, b2) {
-    const d1 = direction(b1, b2, a1);
-    const d2 = direction(b1, b2, a2);
-    const d3 = direction(a1, a2, b1);
-    const d4 = direction(a1, a2, b2);
-
-    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
-        ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Helper for line segment intersection
-   */
-  function direction(p1, p2, p3) {
-    return (p3[0] - p1[0]) * (p2[1] - p1[1]) - (p2[0] - p1[0]) * (p3[1] - p1[1]);
+    // Fallback if validation module not loaded
+    return { valid: true, errors: [] };
   }
 
   /**
@@ -2442,8 +2252,12 @@
     // Legacy boundary snapping (for backward compatibility)
     setBoundarySnappingEnabled: setBoundarySnappingEnabled,
     isBoundarySnappingEnabled: isBoundarySnappingEnabled,
+    // Validation functions (wraps validation module with internal state)
     validateAllParcels: validateAllParcels,
-    getBoundaryAreaHectares: getBoundaryAreaHectares
+    getBoundaryAreaHectares: getBoundaryAreaHectares,
+    // Internal state accessors for validation
+    getHabitatParcels: () => habitatParcels,
+    getBoundaryPolygon: () => boundaryPolygon
   };
 
 })(window);

@@ -18,17 +18,6 @@ window.GOVUKPrototypeKit.documentReady(() => {
   console.log('Mode:', mode);
   console.log('Boundary URL:', boundaryUrl);
 
-  // Define the vector tile layer
-  const vectorTileLayer = new ol.layer.VectorTile({
-    declutter: true
-  });
-
-  // Apply a style function to the vector tile layer
-  olms.applyStyle(
-    vectorTileLayer,
-    '/api/os/tiles/style'
-  );
-
   // Define the UK extent in EPSG:3857
   const ukExtent = ol.proj.transformExtent(
     [ -10.76418, 49.528423, 1.9134116, 61.331151 ], 
@@ -39,36 +28,101 @@ window.GOVUKPrototypeKit.documentReady(() => {
   // England center coordinates
   const englandCenter = ol.proj.fromLonLat([-1.5, 52.5]);
 
-  // Initialize the map object
-  const map = new ol.Map({
-    target: "map",
-    layers: [ vectorTileLayer ],
-    view: new ol.View({
-      projection: 'EPSG:3857',
-      extent: ukExtent,
-      center: englandCenter,
-      zoom: 7,
-      minZoom: 6,
-      maxZoom: 16,
-      constrainResolution: true,
-      smoothResolutionConstraint: true
+  // Fetch Tile Matrix Set and Style for NGD tiles
+  const collectionId = 'ngd-base';
+  const tmsUrl = `https://api.os.uk/maps/vector/ngd/ota/v1/tilematrixsets/3857`;
+  const styleUrl = '/api/os/tiles/style';
+
+  Promise.all([fetch(tmsUrl), fetch(styleUrl)])
+    .then(responses => Promise.all(responses.map(res => res.json())))
+    .then(([tms, glStyle]) => {
+      console.log('✓ TMS and style loaded');
+
+      // Create tile grid from TMS
+      const tileGrid = new ol.tilegrid.TileGrid({
+        resolutions: tms.tileMatrices.map(({ cellSize }) => cellSize),
+        origin: tms.tileMatrices[0].pointOfOrigin,
+        tileSize: [tms.tileMatrices[0].tileHeight, tms.tileMatrices[0].tileWidth]
+      });
+
+      // Define the MVT format with octet-stream support
+      const formatMvt = new ol.format.MVT();
+      formatMvt.supportedMediaTypes.push('application/octet-stream');
+      
+      console.log('MVT format supported types:', formatMvt.supportedMediaTypes);
+
+      // Create the vector tile layer with VectorTile source
+      // The tile URL is proxied through our backend to add the API key securely
+      // OGC API Tiles uses {z}/{y}/{x} order (TileMatrix/TileRow/TileCol)
+      const vectorTileLayer = new ol.layer.VectorTile({
+        source: new ol.source.VectorTile({
+          format: formatMvt,
+          url: `/api/os/tiles/${collectionId}/{z}/{y}/{x}`,
+          projection: 'EPSG:3857',
+          tileGrid: tileGrid
+        }),
+        declutter: true
+      });
+      
+      // Add error handler to see tile loading issues
+      vectorTileLayer.getSource().on('tileloaderror', function(event) {
+        console.error('Tile load error:', event);
+      });
+
+      // Apply style to the vector tile layer with NGD-specific parameters
+      // Use updateSource: false to prevent olms from recreating the source
+      return olms.applyStyle(
+        vectorTileLayer,
+        glStyle,
+        { source: collectionId, updateSource: false },
+        { styleUrl: null },
+        tileGrid.getResolutions()
+      ).then(() => {
+        console.log('✓ Style applied to layer');
+
+        // Initialize the map object
+        const map = new ol.Map({
+          target: "map",
+          layers: [ vectorTileLayer ],
+          view: new ol.View({
+            projection: 'EPSG:3857',
+            extent: ukExtent,
+            center: englandCenter,
+            zoom: 7,
+            minZoom: 6,
+            maxZoom: 19,
+            resolutions: tileGrid.getResolutions(),
+            constrainResolution: true,
+            smoothResolutionConstraint: true
+          })
+        });
+
+        console.log('✓ Map initialized');
+
+        // Set up zoom level display
+        setupZoomDisplay(map);
+
+        // Initialize based on mode
+        if (mode === 'habitat-parcels' && boundaryUrl) {
+          // Fetch boundary and initialize in habitat-parcels mode
+          initHabitatParcelsMode(map, boundaryUrl);
+        } else {
+          // Initialize in red-line-boundary mode
+          initRedLineBoundaryMode(map);
+        }
+
+        // Set up UI control handlers based on mode
+        setupUIControls(mode);
+      });
     })
-  });
-
-  // Set up zoom level display
-  setupZoomDisplay(map);
-
-  // Initialize based on mode
-  if (mode === 'habitat-parcels' && boundaryUrl) {
-    // Fetch boundary and initialize in habitat-parcels mode
-    initHabitatParcelsMode(map, boundaryUrl);
-  } else {
-    // Initialize in red-line-boundary mode
-    initRedLineBoundaryMode(map);
-  }
-
-  // Set up UI control handlers based on mode
-  setupUIControls(mode);
+    .catch(error => {
+      console.error('❌ Error initializing map:', error);
+      // Show error to user
+      const mapContainer = document.getElementById('map');
+      if (mapContainer) {
+        mapContainer.innerHTML = '<div style="padding: 20px; color: red;">Error loading map. Please check console for details.</div>';
+      }
+    });
 });
 
 /**
