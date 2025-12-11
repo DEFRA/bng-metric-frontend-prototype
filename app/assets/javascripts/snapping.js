@@ -872,6 +872,19 @@
       });
     }
 
+    // Post-processing: If we snapped to an edge, check if the computed point
+    // is very close to an exact vertex and use that instead.
+    // This prevents floating-point precision issues from creating "slivers"
+    if (snapPoint && (snapType === SNAP_TYPE.BOUNDARY_EDGE || 
+                      snapType === SNAP_TYPE.PARCEL_EDGE || 
+                      snapType === SNAP_TYPE.OS_FEATURE)) {
+      const exactVertex = findNearestExactVertex(snapPoint, tolerance * 0.1);
+      if (exactVertex.vertex) {
+        snapPoint = exactVertex.vertex;
+        snapType = exactVertex.type;
+      }
+    }
+
     // Return coordinate and snap type
     const result = {
       coordinate: snapPoint || coordinate,
@@ -888,6 +901,57 @@
     }
     
     return result;
+  }
+
+  /**
+   * Find the nearest exact vertex to a given point
+   * Used to correct edge snap points to exact vertex coordinates
+   * @param {Array} point - [x, y] coordinate to check
+   * @param {number} tolerance - Maximum distance to consider for snapping
+   * @returns {Object} { vertex: [x,y] or null, type: SNAP_TYPE }
+   */
+  function findNearestExactVertex(point, tolerance) {
+    let nearestVertex = null;
+    let nearestType = SNAP_TYPE.NONE;
+    let minDistance = Infinity;
+
+    // Check boundary vertices
+    if (currentMode === 'habitat-parcels' && boundaryPolygon) {
+      const boundaryCoords = boundaryPolygon.getCoordinates()[0];
+      for (let i = 0; i < boundaryCoords.length - 1; i++) {
+        const vertex = boundaryCoords[i];
+        const dist = getDistance(point, vertex);
+        if (dist < minDistance && dist < tolerance) {
+          minDistance = dist;
+          nearestVertex = vertex;
+          nearestType = SNAP_TYPE.BOUNDARY_VERTEX;
+        }
+      }
+    }
+
+    // Check parcel vertices
+    if (currentMode === 'habitat-parcels' && habitatParcels.length > 0) {
+      habitatParcels.forEach((parcel, index) => {
+        if (index === editingParcelIndex) return;
+        if (isDrawing && index === currentParcelIndex) return;
+
+        const parcelGeom = parcel.feature.getGeometry();
+        if (!parcelGeom) return;
+
+        const parcelCoords = parcelGeom.getCoordinates()[0];
+        for (let i = 0; i < parcelCoords.length - 1; i++) {
+          const vertex = parcelCoords[i];
+          const dist = getDistance(point, vertex);
+          if (dist < minDistance && dist < tolerance) {
+            minDistance = dist;
+            nearestVertex = vertex;
+            nearestType = SNAP_TYPE.PARCEL_VERTEX;
+          }
+        }
+      });
+    }
+
+    return { vertex: nearestVertex, type: nearestType };
   }
 
   /**

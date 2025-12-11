@@ -7,6 +7,8 @@ DO NOT create extra .md files for instructions or findings from changes, unless 
 
 Always add a semicolon `;` to JavaScript code lines where expected.
 
+The project is designed to allow users to draw red-line boundaries and habitat areas within a red-line boundary. This is part of a Biodiversity Net Gains metric calculation tool for GovUK. Currently it is in prototype phase.
+
 ## Front-end code apporach
 **Purpose:**  
 Generate form-based prototypes using the GOV.UK Prototype Kit and GOV.UK Design System.
