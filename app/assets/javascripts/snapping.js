@@ -8,10 +8,50 @@
 
   // OS NGD feature collections - Buildings, Roads, Rail, and Watercourses
   const SNAP_LAYERS = [
-    'bld-fts-building-1',        // Buildings
-    'trn-ntwk-roadlink-1',       // Roads
-    'trn-ntwk-railwaylink-1',    // Railways
-    'wtr-ntwk-waterlink-1',      // Watercourses
+    // Buildings + Structures
+    'bld-fts-building-1',            // Building footprints  
+    'bld-fts-building-2',            // Building secondary/detail  
+    'bld-fts-building-3',            // Building attributes/detail  
+    'bld-fts-buildingline-1',        // Building boundary lines
+    'str-fts-fieldboundary-1',       // Field boundaries (walls, fences etc)
+    'str-fts-structureline-1',       // Other linear structures
+  
+    // Land & Site areas
+    'lnd-fts-land-1',                // Land areas (fields/areas)
+    'lnd-fts-land-2',                // Land type variants
+    'lnd-fts-land-3',                // Additional land area types
+    'lus-fts-site-1',                // Site extents (land use areas)
+    'lus-fts-site-2',                // Additional site extents
+  
+    // Water Network – centrelines & nodes
+    'wtr-ntwk-waterlink-1',          // Watercourse links (rivers/streams)
+    'wtr-ntwk-waterlink-2',          // Additional watercourse links
+    'wtr-ntwk-waternode-1',          // Nodes/intersections of water network
+  
+    // Waterbody polygons
+    'wtr-fts-water-1',               // Water area polygons  
+    'wtr-fts-water-2',               // Additional water area types
+    'wtr-fts-water-3',               // Extra water area detail
+  
+    // Vegetation / Hedgerows
+    'lnd-fts-landformline-1',        // Natural linear landforms
+    'lnd-fts-landformpoint-1',       // Natural point landforms
+    'lnd-fts-landpoint-1',           // Land point features
+    // Note: OS NGD does not have a dedicated “hedgerow” type – use linear vegetation from landform or fieldboundary context
+  
+    // Transport Network – roads/paths/rail
+    'trn-ntwk-roadlink-1',           // Road network link 1
+    'trn-ntwk-roadlink-2',           // Road network link 2
+    'trn-ntwk-roadlink-3',           // Road network link 3
+    'trn-ntwk-roadlink-4',           // Road network link 4
+    'trn-ntwk-roadlink-5',           // Road network link 5
+    'trn-ntwk-road-1',               // Road centreline
+    'trn-ntwk-pathlink-1',           // Path network link 1
+    'trn-ntwk-pathlink-2',           // Path network link 2
+    'trn-ntwk-pathlink-3',           // Path network link 3
+    'trn-ntwk-path-1',               // Path network
+    'trn-ntwk-railwaylink-1',        // Railway centreline
+    'trn-ntwk-railwaylinkset-1',     // Railway link sets
   ];
 
   // Use the backend proxy endpoint for OS Features API
