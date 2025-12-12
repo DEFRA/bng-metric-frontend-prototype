@@ -183,6 +183,21 @@ async function initHabitatParcelsMode(map, boundaryUrl) {
         }
       });
     }
+
+    // Initialize slice tool for habitat-parcels mode
+    if (window.SliceTool && window.SliceTool.init) {
+      window.SliceTool.init(map, {
+        onSliceComplete: () => {
+          console.log('Slice complete');
+        },
+        onSliceCancel: () => {
+          console.log('Slice cancelled');
+        },
+        onStatusMessage: (message, type) => {
+          showStatus(message, type);
+        }
+      });
+    }
   } catch (error) {
     console.error('Error fetching boundary:', error);
     showStatus('Error loading boundary. Please try again.', 'error');
@@ -279,6 +294,28 @@ function setupUIControls(mode) {
         if (startButton) startButton.parentElement.style.display = 'block';
         cancelButton.parentElement.style.display = 'none';
         showStatus('Drawing cancelled', 'info');
+      }
+    });
+  }
+
+  // Slice tool buttons (habitat-parcels mode)
+  const startSliceButton = document.getElementById('start-slice');
+  const cancelSliceButton = document.getElementById('cancel-slice');
+
+  if (startSliceButton) {
+    startSliceButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.SliceTool && window.SliceTool.startSliceMode) {
+        window.SliceTool.startSliceMode();
+      }
+    });
+  }
+
+  if (cancelSliceButton) {
+    cancelSliceButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.SliceTool && window.SliceTool.cancelSlice) {
+        window.SliceTool.cancelSlice();
       }
     });
   }

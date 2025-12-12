@@ -2378,7 +2378,8 @@
     getBoundaryAreaHectares: getBoundaryAreaHectares,
     // Internal state accessors for validation
     getHabitatParcels: () => habitatParcels,
-    getBoundaryPolygon: () => boundaryPolygon
+    getBoundaryPolygon: () => boundaryPolygon,
+    getDrawSource: () => drawSource
   };
 
 })(window);

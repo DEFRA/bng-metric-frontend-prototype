@@ -26,6 +26,12 @@
       <a href="#" id="cancel-drawing" data-action="cancel">Cancel Drawing</a>
     </li>
     <li>
+      <a href="#" id="start-slice" data-action="slice">Slice</a>
+    </li>
+    <li style="display: none;">
+      <a href="#" id="cancel-slice" data-action="cancel-slice">Cancel Slice</a>
+    </li>
+    <li>
       <a href="#" id="save-parcels" class="disabled" data-action="save">Save Parcels</a>
     </li>
   </ul>
@@ -189,6 +195,24 @@
         <li>Use the delete button to remove a parcel</li>
         <li>The total area of all parcels is shown below the list</li>
       </ul>
+      <h3 class="govuk-heading-s govuk-!-margin-top-4">Slicing parcels:</h3>
+      <p class="govuk-body-s">Use the <strong>Slice</strong> tool to split the boundary or an existing parcel into two separate parcels:</p>
+      <ol class="govuk-list govuk-list--number">
+        <li><strong>Click "Slice"</strong> to enter slice mode</li>
+        <li>Click on a <strong>vertex (corner point)</strong> of the red-line boundary or an existing parcel</li>
+        <li>A preview line will appear from your selected starting point</li>
+        <li>Click on a <strong>different vertex</strong> of the <strong>same polygon</strong> to complete the slice</li>
+        <li>Two new parcels will be created from the split</li>
+      </ol>
+      <div class="govuk-inset-text govuk-!-margin-top-2">
+        <strong>Slice rules:</strong>
+        <ul class="govuk-list govuk-list--bullet govuk-!-margin-top-2">
+          <li>Both start and end points must be on vertices (corner points)</li>
+          <li>Both points must be on the same polygon</li>
+          <li>Adjacent vertices cannot be used (would create invalid shapes)</li>
+          <li>Press <strong>Escape</strong> or click "Cancel Slice" to cancel</li>
+        </ul>
+      </div>
       <div class="govuk-inset-text govuk-!-margin-top-4">
         <strong>Validation rules:</strong>
         <ul class="govuk-list govuk-list--bullet govuk-!-margin-top-2">
