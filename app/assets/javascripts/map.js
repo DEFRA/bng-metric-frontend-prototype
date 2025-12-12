@@ -229,6 +229,23 @@ function setupZoomDisplay(map) {
 }
 
 /**
+ * Helper function to enable/disable control elements (buttons or links)
+ */
+function setControlEnabled(element, enabled) {
+  if (!element) return;
+  
+  if (element.tagName === 'BUTTON') {
+    element.disabled = !enabled;
+  } else if (element.tagName === 'A') {
+    if (enabled) {
+      element.classList.remove('disabled');
+    } else {
+      element.classList.add('disabled');
+    }
+  }
+}
+
+/**
  * Set up UI control button handlers
  */
 function setupUIControls(mode) {
@@ -242,11 +259,12 @@ function setupUIControls(mode) {
 
   // Start drawing button
   if (startButton) {
-    startButton.addEventListener('click', () => {
+    startButton.addEventListener('click', (e) => {
+      e.preventDefault();
       if (window.SnapDrawing && window.SnapDrawing.startDrawing) {
         window.SnapDrawing.startDrawing();
-        startButton.style.display = 'none';
-        cancelButton.style.display = 'inline-block';
+        startButton.parentElement.style.display = 'none';
+        if (cancelButton) cancelButton.parentElement.style.display = 'block';
         showStatus('Drawing mode active - click to place vertices', 'info');
       }
     });
@@ -254,11 +272,12 @@ function setupUIControls(mode) {
 
   // Cancel drawing button
   if (cancelButton) {
-    cancelButton.addEventListener('click', () => {
+    cancelButton.addEventListener('click', (e) => {
+      e.preventDefault();
       if (window.SnapDrawing && window.SnapDrawing.cancelDrawing) {
         window.SnapDrawing.cancelDrawing();
-        startButton.style.display = 'inline-block';
-        cancelButton.style.display = 'none';
+        if (startButton) startButton.parentElement.style.display = 'block';
+        cancelButton.parentElement.style.display = 'none';
         showStatus('Drawing cancelled', 'info');
       }
     });
@@ -266,7 +285,8 @@ function setupUIControls(mode) {
 
   // Clear polygon button (red-line-boundary mode)
   if (clearButton) {
-    clearButton.addEventListener('click', () => {
+    clearButton.addEventListener('click', (e) => {
+      e.preventDefault();
       if (window.SnapDrawing && window.SnapDrawing.clearPolygon) {
         window.SnapDrawing.clearPolygon();
         showStatus('Polygon cleared - draw a new one', 'info');
@@ -276,7 +296,8 @@ function setupUIControls(mode) {
 
   // Export GeoJSON button
   if (exportButton) {
-    exportButton.addEventListener('click', () => {
+    exportButton.addEventListener('click', (e) => {
+      e.preventDefault();
       if (window.SnapDrawing) {
         let geojson;
         
@@ -402,7 +423,8 @@ function setupUIControls(mode) {
 
   // Save boundary button (red-line-boundary mode)
   if (saveBoundaryButton) {
-    saveBoundaryButton.addEventListener('click', async () => {
+    saveBoundaryButton.addEventListener('click', async (e) => {
+      e.preventDefault();
       if (window.SnapDrawing && window.SnapDrawing.getDrawnPolygonGeoJSON) {
         const geojson = window.SnapDrawing.getDrawnPolygonGeoJSON();
         
@@ -412,7 +434,8 @@ function setupUIControls(mode) {
         }
 
         try {
-          saveBoundaryButton.disabled = true;
+          setControlEnabled(saveBoundaryButton, false);
+          const originalText = saveBoundaryButton.textContent;
           saveBoundaryButton.textContent = 'Saving...';
 
           const response = await fetch('/api/save-red-line-boundary', {
@@ -436,7 +459,7 @@ function setupUIControls(mode) {
         } catch (error) {
           console.error('Error saving boundary:', error);
           showStatus('Error saving boundary. Please try again.', 'error');
-          saveBoundaryButton.disabled = false;
+          setControlEnabled(saveBoundaryButton, true);
           saveBoundaryButton.textContent = 'Save Boundary';
         }
       }
@@ -445,7 +468,8 @@ function setupUIControls(mode) {
 
   // Save parcels button (habitat-parcels mode)
   if (saveParcelsButton) {
-    saveParcelsButton.addEventListener('click', async () => {
+    saveParcelsButton.addEventListener('click', async (e) => {
+      e.preventDefault();
       if (window.SnapDrawing && window.SnapDrawing.getHabitatParcelsGeoJSON) {
         const geojson = window.SnapDrawing.getHabitatParcelsGeoJSON();
         
@@ -466,7 +490,8 @@ function setupUIControls(mode) {
         }
 
         try {
-          saveParcelsButton.disabled = true;
+          setControlEnabled(saveParcelsButton, false);
+          const originalText = saveParcelsButton.textContent;
           saveParcelsButton.textContent = 'Saving...';
 
           const response = await fetch('/api/save-habitat-parcels', {
@@ -490,7 +515,7 @@ function setupUIControls(mode) {
         } catch (error) {
           console.error('Error saving parcels:', error);
           showStatus('Error saving parcels. Please try again.', 'error');
-          saveParcelsButton.disabled = false;
+          setControlEnabled(saveParcelsButton, true);
           saveParcelsButton.textContent = 'Save Parcels';
         }
       }

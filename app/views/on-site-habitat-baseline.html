@@ -1,4 +1,5 @@
-{% extends "layouts/main.html" %}
+{% extends "layouts/map-layout.html" %}
+{% from "govuk/components/back-link/macro.njk" import govukBackLink %}
 
 {% set pageName="On-site Habitat Baseline Map" %}
 
@@ -6,217 +7,196 @@
   On-site Habitat Baseline Map - GOV.UK Prototype Kit
 {% endblock %}
 
-{% block beforeContent %}
-  <a href="/define-red-line-boundary" class="govuk-back-link">Back</a>
+{% block backLink %}
+  {{ govukBackLink({
+    href: "/define-red-line-boundary"
+  }) }}
 {% endblock %}
 
-{% block head %}
-  {{ super() }}
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/OrdnanceSurvey/os-api-branding@latest/os-api-branding.css" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.6.0/ol.css" />
-{% endblock %}
+{% block mapAttributes %}data-mode="habitat-parcels" data-boundary-url="/api/red-line-boundary"{% endblock %}
 
-{% block content %}
-
-<div class="govuk-grid-row">
-  <div class="govuk-grid-column-two-thirds">
-    <h1 class="govuk-heading-xl">
-      On-site Habitat Baseline Map
-    </h1>
-    
-    <p class="govuk-body">
-      Draw habitat parcels within your red line boundary. Each parcel must be completely within the boundary and must not overlap with other parcels.
-    </p>
-
-    <details class="govuk-details">
-      <summary class="govuk-details__summary">
-        <span class="govuk-details__summary-text">
-          How to draw habitat parcels
-        </span>
-      </summary>
-      <div class="govuk-details__text">
-        <h3 class="govuk-heading-s">Drawing habitat parcels:</h3>
-        <ol class="govuk-list govuk-list--number">
-          <li>Your red line boundary is shown on the map (red dashed line)</li>
-          <li><strong>Click "Add Parcel"</strong> to start drawing a new habitat parcel</li>
-          <li>Draw the parcel using intelligent snapping to ensure precise boundaries</li>
-          <li>The parcel must be <strong>completely within</strong> the red line boundary</li>
-          <li>Parcels must <strong>not overlap</strong> with each other</li>
-          <li>You can draw <strong>multiple parcels</strong> - each will be shown in a different colour</li>
-        </ol>
-        <h3 class="govuk-heading-s govuk-!-margin-top-4">Visual indicators:</h3>
-        <ul class="govuk-list govuk-list--bullet">
-          <li><strong style="color: #d4351c;">Small red dots</strong> = boundary corners (always visible as reference points)</li>
-          <li><strong style="color: #d4351c;">Large red circle</strong> = cursor snapping to boundary corner (highest priority)</li>
-          <li><strong style="color: #ae2573;">Large magenta circle</strong> = cursor snapping to parcel corner (exact match)</li>
-          <li><strong style="color: #ff8c00;">Orange circle</strong> = snapping to edge or OS feature</li>
-          <li><strong style="color: #0096ff;">Small blue circle</strong> = no snapping (free placement)</li>
-        </ul>
-        <div class="govuk-inset-text govuk-!-margin-top-2">
-          <strong>Tip:</strong> Boundary and parcel corner snapping has the highest priority - it will always trigger before OS features for precise alignment.
-        </div>
-        <h3 class="govuk-heading-s govuk-!-margin-top-4">Managing parcels:</h3>
-        <ul class="govuk-list govuk-list--bullet">
-          <li>Each parcel's area is displayed in the parcels list</li>
-          <li>Click on a parcel in the list to highlight it on the map</li>
-          <li>Use the delete button to remove a parcel</li>
-          <li>The total area of all parcels is shown below the list</li>
-        </ul>
-        <div class="govuk-inset-text govuk-!-margin-top-4">
-          <strong>Validation rules:</strong>
-          <ul class="govuk-list govuk-list--bullet govuk-!-margin-top-2">
-            <li>All parcels must be inside the red line boundary</li>
-            <li>Parcels cannot overlap with each other</li>
-            <li>Invalid parcels will be rejected with an error message</li>
-          </ul>
+{% block leftPanelContent %}
+  <h2 class="govuk-heading-m">Drawing Controls</h2>
+  
+  <ul class="map-controls-list">
+    <li>
+      <a href="#" id="start-drawing" data-action="add">Add Parcel</a>
+    </li>
+    <li style="display: none;">
+      <a href="#" id="cancel-drawing" data-action="cancel">Cancel Drawing</a>
+    </li>
+    <li>
+      <a href="#" id="save-parcels" class="disabled" data-action="save">Save Parcels</a>
+    </li>
+  </ul>
+  
+  <div class="govuk-form-group govuk-!-margin-top-4">
+    <fieldset class="govuk-fieldset">
+      <legend class="govuk-fieldset__legend govuk-fieldset__legend--s">
+        Snapping options
+      </legend>
+      <div class="govuk-checkboxes govuk-checkboxes--small">
+        <div class="govuk-checkboxes__item">
+          <input class="govuk-checkboxes__input" id="snap-enabled" name="snap-enabled" type="checkbox" checked>
+          <label class="govuk-label govuk-checkboxes__label" for="snap-enabled">
+            Snap to OS features
+          </label>
         </div>
       </div>
-    </details>
-  </div>
-
-  <div class="govuk-grid-column-one-third">
-    <div class="govuk-button-group">
-      <button type="button" class="govuk-button" id="start-drawing">
-        Add Parcel
-      </button>
-      <button type="button" class="govuk-button govuk-button--warning" id="cancel-drawing" style="display: none;">
-        Cancel Drawing
-      </button>
-      <button type="button" class="govuk-button" id="save-parcels" disabled>
-        Save Parcels
-      </button>
-    </div>
-    
-    <div class="govuk-form-group govuk-!-margin-top-4">
-      <fieldset class="govuk-fieldset">
-        <legend class="govuk-fieldset__legend govuk-fieldset__legend--s">
-          Snapping options
-        </legend>
-        <div class="govuk-checkboxes govuk-checkboxes--small">
-          <div class="govuk-checkboxes__item">
-            <input class="govuk-checkboxes__input" id="snap-enabled" name="snap-enabled" type="checkbox" checked>
-            <label class="govuk-label govuk-checkboxes__label" for="snap-enabled">
-              Snap to OS features
-            </label>
-          </div>
-        </div>
-        <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-2 govuk-!-margin-bottom-2">
-        <h4 class="govuk-heading-xs govuk-!-margin-bottom-2">Boundary snapping:</h4>
-        <div class="govuk-checkboxes govuk-checkboxes--small">
-          <div class="govuk-checkboxes__item">
-            <input class="govuk-checkboxes__input" id="snap-boundary-vertices" name="snap-boundary-vertices" type="checkbox" checked>
-            <label class="govuk-label govuk-checkboxes__label" for="snap-boundary-vertices">
-              Snap to boundary corners
-            </label>
-          </div>
-          <div class="govuk-checkboxes__item">
-            <input class="govuk-checkboxes__input" id="snap-boundary-edges" name="snap-boundary-edges" type="checkbox" checked>
-            <label class="govuk-label govuk-checkboxes__label" for="snap-boundary-edges">
-              Snap to boundary edges
-            </label>
-          </div>
-        </div>
-        <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-2 govuk-!-margin-bottom-2">
-        <h4 class="govuk-heading-xs govuk-!-margin-bottom-2">Parcel snapping:</h4>
-        <div class="govuk-checkboxes govuk-checkboxes--small">
-          <div class="govuk-checkboxes__item">
-            <input class="govuk-checkboxes__input" id="snap-parcel-vertices" name="snap-parcel-vertices" type="checkbox" checked>
-            <label class="govuk-label govuk-checkboxes__label" for="snap-parcel-vertices">
-              Snap to parcel corners
-            </label>
-          </div>
-          <div class="govuk-checkboxes__item">
-            <input class="govuk-checkboxes__input" id="snap-parcel-edges" name="snap-parcel-edges" type="checkbox" checked>
-            <label class="govuk-label govuk-checkboxes__label" for="snap-parcel-edges">
-              Snap to parcel edges
-            </label>
-          </div>
-        </div>
-      </fieldset>
-      <div class="govuk-hint govuk-!-margin-top-2">
-        Toggle individual snap types to isolate specific targets
-      </div>
-    </div>
-    
-    <div id="status-message" class="govuk-notification-banner" role="region" aria-labelledby="status-title" style="display: none;">
-      <div class="govuk-notification-banner__header">
-        <h2 class="govuk-notification-banner__title" id="status-title">
-          Information
-        </h2>
-      </div>
-      <div class="govuk-notification-banner__content">
-        <p class="govuk-notification-banner__heading" id="status-text">
-          Status message
-        </p>
-      </div>
-    </div>
-    
-    <div id="boundary-area-display" class="govuk-!-margin-top-4" style="background: #f3f2f1; padding: 15px; border-left: 4px solid #d4351c;">
-      <h3 class="govuk-heading-s govuk-!-margin-bottom-2">Red Line Boundary</h3>
-      <p class="govuk-body-s govuk-!-margin-bottom-0">
-        <strong>Total site area:</strong> <span id="boundary-area">--</span> hectares
-      </p>
-    </div>
-
-    <div id="parcels-list" class="govuk-!-margin-top-4" style="height: 220px; overflow-y: auto;">
-      <h3 class="govuk-heading-s">Habitat Parcels</h3>
-      <ul class="govuk-list" id="parcels-list-items" style="min-height: 40px; max-height: 100px; overflow-y: auto;">
-        <li class="govuk-body-s" style="color: #505a5f;">No parcels drawn yet</li>
-      </ul>
       <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-2 govuk-!-margin-bottom-2">
-      <p class="govuk-body-s govuk-!-margin-bottom-1">
-        <strong>Total parcels area:</strong> <span id="total-area">0.00</span> hectares
-      </p>
-      <div id="remaining-area-container" style="height: 50px;">
-        <p class="govuk-body-s govuk-!-margin-bottom-0">
-          <strong>Remaining to assign:</strong> <span id="remaining-area-value" style="color: #d4351c;">--</span> hectares
-        </p>
-        <p class="govuk-body-s govuk-!-margin-bottom-0" id="remaining-area-warning" style="color: #d4351c; display: none;">
-          (exceeds boundary)
-        </p>
+      <p class="govuk-label govuk-label--s govuk-!-margin-bottom-2">Boundary snapping:</p>
+      <div class="govuk-checkboxes govuk-checkboxes--small">
+        <div class="govuk-checkboxes__item">
+          <input class="govuk-checkboxes__input" id="snap-boundary-vertices" name="snap-boundary-vertices" type="checkbox" checked>
+          <label class="govuk-label govuk-checkboxes__label" for="snap-boundary-vertices">
+            Snap to boundary corners
+          </label>
+        </div>
+        <div class="govuk-checkboxes__item">
+          <input class="govuk-checkboxes__input" id="snap-boundary-edges" name="snap-boundary-edges" type="checkbox" checked>
+          <label class="govuk-label govuk-checkboxes__label" for="snap-boundary-edges">
+            Snap to boundary edges
+          </label>
+        </div>
       </div>
+      <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-2 govuk-!-margin-bottom-2">
+      <p class="govuk-label govuk-label--s govuk-!-margin-bottom-2">Parcel snapping:</p>
+      <div class="govuk-checkboxes govuk-checkboxes--small">
+        <div class="govuk-checkboxes__item">
+          <input class="govuk-checkboxes__input" id="snap-parcel-vertices" name="snap-parcel-vertices" type="checkbox" checked>
+          <label class="govuk-label govuk-checkboxes__label" for="snap-parcel-vertices">
+            Snap to parcel corners
+          </label>
+        </div>
+        <div class="govuk-checkboxes__item">
+          <input class="govuk-checkboxes__input" id="snap-parcel-edges" name="snap-parcel-edges" type="checkbox" checked>
+          <label class="govuk-label govuk-checkboxes__label" for="snap-parcel-edges">
+            Snap to parcel edges
+          </label>
+        </div>
+      </div>
+    </fieldset>
+    <div class="govuk-hint govuk-!-margin-top-2">
+      Toggle individual snap types to isolate specific targets
     </div>
-    
-    <div id="area-display" class="govuk-!-margin-top-4" style="display: none;">
-      <h3 class="govuk-heading-s">Current Parcel Area</h3>
-      <p class="govuk-body" style="font-size: 24px; font-weight: bold; color: #1d70b8;">
-        <span id="area-value">--</span> hectares
-      </p>
-      <p class="govuk-hint">
-        (<span id="area-acres">--</span> acres)
+  </div>
+
+  <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-4 govuk-!-margin-bottom-4">
+
+  <div class="govuk-!-margin-bottom-2">
+    <strong class="govuk-tag" id="zoom-display" style="font-size: 16px; padding: 8px 12px;">
+      Zoom: --
+    </strong>
+  </div>
+  <div>
+    <span class="govuk-body-s" id="snap-status">
+      Snapping disabled (zoom to level 14+)
+    </span>
+  </div>
+  
+  <div id="status-message" class="govuk-notification-banner govuk-!-margin-top-4" role="region" aria-labelledby="status-title" style="display: none; position: static; box-shadow: none; transform: none; left: auto;">
+    <div class="govuk-notification-banner__header">
+      <h2 class="govuk-notification-banner__title" id="status-title">
+        Information
+      </h2>
+    </div>
+    <div class="govuk-notification-banner__content">
+      <p class="govuk-notification-banner__heading" id="status-text">
+        Status message
       </p>
     </div>
   </div>
-</div>
-
-<div class="govuk-grid-row">
-  <div class="govuk-grid-column-full">
-    <div class="govuk-!-margin-bottom-2">
-      <strong class="govuk-tag" id="zoom-display" style="font-size: 16px; padding: 8px 12px;">
-        Zoom: --
-      </strong>
-      <span class="govuk-body-s govuk-!-margin-left-2" id="snap-status">
-        Snapping disabled (zoom to level 14+)
-      </span>
-    </div>
-    <div id="map" class="os-map-container" data-mode="habitat-parcels" data-boundary-url="/api/red-line-boundary"></div>
-  </div>
-</div>
-
 {% endblock %}
 
-{% block pageScripts %}
-  <script src="https://cdn.jsdelivr.net/gh/OrdnanceSurvey/os-api-branding@latest/os-api-branding.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/ol@v10.6.0/dist/ol.js"></script>
-  <script src="https://unpkg.com/ol-mapbox-style@13.1.0/dist/olms.js"></script>
-  <script>
-    // Register EPSG:27700 (British National Grid) projection
-    proj4.defs('EPSG:27700', '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs');
-    ol.proj.proj4.register(proj4);
-    console.log('✓ EPSG:27700 projection registered');
-  </script>
-  <script src="/public/javascripts/validation.js"></script>
-  <script src="/public/javascripts/snapping.js"></script>
-  <script src="/public/javascripts/map.js"></script>
+{% block rightPanelContent %}
+  <h1 class="govuk-heading-l">
+    On-site Habitat Baseline Map
+  </h1>
+  
+  <p class="govuk-body">
+    Draw habitat parcels within your red line boundary. Each parcel must be completely within the boundary and must not overlap with other parcels.
+  </p>
+
+  <div id="boundary-area-display" class="govuk-!-margin-top-4" style="background: #f3f2f1; padding: 15px; border-left: 4px solid #d4351c;">
+    <h3 class="govuk-heading-s govuk-!-margin-bottom-2">Red Line Boundary</h3>
+    <p class="govuk-body-s govuk-!-margin-bottom-0">
+      <strong>Total site area:</strong> <span id="boundary-area">--</span> hectares
+    </p>
+  </div>
+
+  <div id="area-display" class="govuk-!-margin-top-4" style="display: none;">
+    <h3 class="govuk-heading-s">Current Parcel Area</h3>
+    <p class="govuk-body" style="font-size: 24px; font-weight: bold; color: #1d70b8;">
+      <span id="area-value">--</span> hectares
+    </p>
+    <p class="govuk-hint">
+      (<span id="area-acres">--</span> acres)
+    </p>
+  </div>
+
+  <div id="parcels-list" class="govuk-!-margin-top-4">
+    <h3 class="govuk-heading-s">Habitat Parcels</h3>
+    <ul class="govuk-list" id="parcels-list-items">
+      <li class="govuk-body-s" style="color: #505a5f;">No parcels drawn yet</li>
+    </ul>
+    <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-2 govuk-!-margin-bottom-2">
+    <p class="govuk-body-s govuk-!-margin-bottom-1">
+      <strong>Total parcels area:</strong> <span id="total-area">0.00</span> hectares
+    </p>
+    <div id="remaining-area-container">
+      <p class="govuk-body-s govuk-!-margin-bottom-0">
+        <strong>Remaining to assign:</strong> <span id="remaining-area-value" style="color: #d4351c;">--</span> hectares
+      </p>
+      <p class="govuk-body-s govuk-!-margin-bottom-0" id="remaining-area-warning" style="color: #d4351c; display: none;">
+        (exceeds boundary)
+      </p>
+    </div>
+  </div>
+
+  <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-4 govuk-!-margin-bottom-4">
+
+  <details class="govuk-details">
+    <summary class="govuk-details__summary">
+      <span class="govuk-details__summary-text">
+        How to draw habitat parcels
+      </span>
+    </summary>
+    <div class="govuk-details__text">
+      <h3 class="govuk-heading-s">Drawing habitat parcels:</h3>
+      <ol class="govuk-list govuk-list--number">
+        <li>Your red line boundary is shown on the map (red dashed line)</li>
+        <li><strong>Click "Add Parcel"</strong> to start drawing a new habitat parcel</li>
+        <li>Draw the parcel using intelligent snapping to ensure precise boundaries</li>
+        <li>The parcel must be <strong>completely within</strong> the red line boundary</li>
+        <li>Parcels must <strong>not overlap</strong> with each other</li>
+        <li>You can draw <strong>multiple parcels</strong> - each will be shown in a different colour</li>
+      </ol>
+      <h3 class="govuk-heading-s govuk-!-margin-top-4">Visual indicators:</h3>
+      <ul class="govuk-list govuk-list--bullet">
+        <li><strong style="color: #d4351c;">Small red dots</strong> = boundary corners (always visible as reference points)</li>
+        <li><strong style="color: #d4351c;">Large red circle</strong> = cursor snapping to boundary corner (highest priority)</li>
+        <li><strong style="color: #ae2573;">Large magenta circle</strong> = cursor snapping to parcel corner (exact match)</li>
+        <li><strong style="color: #ff8c00;">Orange circle</strong> = snapping to edge or OS feature</li>
+        <li><strong style="color: #0096ff;">Small blue circle</strong> = no snapping (free placement)</li>
+      </ul>
+      <div class="govuk-inset-text govuk-!-margin-top-2">
+        <strong>Tip:</strong> Boundary and parcel corner snapping has the highest priority - it will always trigger before OS features for precise alignment.
+      </div>
+      <h3 class="govuk-heading-s govuk-!-margin-top-4">Managing parcels:</h3>
+      <ul class="govuk-list govuk-list--bullet">
+        <li>Each parcel's area is displayed in the parcels list</li>
+        <li>Click on a parcel in the list to highlight it on the map</li>
+        <li>Use the delete button to remove a parcel</li>
+        <li>The total area of all parcels is shown below the list</li>
+      </ul>
+      <div class="govuk-inset-text govuk-!-margin-top-4">
+        <strong>Validation rules:</strong>
+        <ul class="govuk-list govuk-list--bullet govuk-!-margin-top-2">
+          <li>All parcels must be inside the red line boundary</li>
+          <li>Parcels cannot overlap with each other</li>
+          <li>Invalid parcels will be rejected with an error message</li>
+        </ul>
+      </div>
+    </div>
+  </details>
 {% endblock %}

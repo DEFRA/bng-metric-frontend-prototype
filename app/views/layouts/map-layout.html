@@ -1,0 +1,65 @@
+{% extends "govuk-prototype-kit/layouts/govuk-branded.njk" %}
+{% from "govuk/components/back-link/macro.njk" import govukBackLink %}
+
+{% block head %}
+  {{ super() }}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/OrdnanceSurvey/os-api-branding@latest/os-api-branding.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.6.0/ol.css" />
+{% endblock %}
+
+{% block header %}
+  {{ govukHeader() }}
+{% endblock %}
+
+{% block bodyStart %}
+  {{ super() }}
+{% endblock %}
+
+{% block main %}
+<div class="map-layout-container">
+  <!-- Left Panel: Controls -->
+  <div class="map-panel-left">
+    {% block backLink %}
+    {{ govukBackLink({
+      href: "/"
+    }) }}
+    {% endblock %}
+    
+    <h2 class="govuk-heading-s govuk-!-margin-top-3">BNG metric</h2>
+    
+    <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-2 govuk-!-margin-bottom-4">
+    
+    {% block leftPanelContent %}
+    <!-- Child templates override this with controls, buttons, etc. -->
+    {% endblock %}
+  </div>
+
+  <!-- Center: Map -->
+  <div class="map-panel-center">
+    <div id="map" class="os-map-container" {% block mapAttributes %}{% endblock %}></div>
+  </div>
+
+  <!-- Right Panel: Info -->
+  <div class="map-panel-right">
+    {% block rightPanelContent %}
+    <!-- Child templates override this with area displays, help text, etc. -->
+    {% endblock %}
+  </div>
+</div>
+{% endblock %}
+
+{% block pageScripts %}
+  <script src="https://cdn.jsdelivr.net/gh/OrdnanceSurvey/os-api-branding@latest/os-api-branding.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ol@v10.6.0/dist/ol.js"></script>
+  <script src="https://unpkg.com/ol-mapbox-style@13.1.0/dist/olms.js"></script>
+  <script>
+    // Register EPSG:27700 (British National Grid) projection
+    proj4.defs('EPSG:27700', '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs');
+    ol.proj.proj4.register(proj4);
+    console.log('✓ EPSG:27700 projection registered');
+  </script>
+  <script src="/public/javascripts/validation.js"></script>
+  <script src="/public/javascripts/snapping.js"></script>
+  <script src="/public/javascripts/map.js"></script>
+{% endblock %}

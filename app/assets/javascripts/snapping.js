@@ -1730,6 +1730,23 @@
   }
 
   /**
+   * Helper function to enable/disable control elements (buttons or links)
+   */
+  function setControlEnabled(element, enabled) {
+    if (!element) return;
+    
+    if (element.tagName === 'BUTTON') {
+      element.disabled = !enabled;
+    } else if (element.tagName === 'A') {
+      if (enabled) {
+        element.classList.remove('disabled');
+      } else {
+        element.classList.add('disabled');
+      }
+    }
+  }
+
+  /**
    * Update UI buttons when polygon is complete (red-line-boundary mode)
    */
   function updateUIForCompletePolygon() {
@@ -1738,10 +1755,10 @@
     const clearButton = document.getElementById('clear-polygon');
     const saveButton = document.getElementById('save-boundary');
     
-    if (startButton) startButton.style.display = 'none';
-    if (cancelButton) cancelButton.style.display = 'none';
-    if (clearButton) clearButton.style.display = 'inline-block';
-    if (saveButton) saveButton.disabled = false;
+    if (startButton) startButton.parentElement.style.display = 'none';
+    if (cancelButton) cancelButton.parentElement.style.display = 'none';
+    if (clearButton) clearButton.parentElement.style.display = 'block';
+    setControlEnabled(saveButton, true);
   }
 
   /**
@@ -1751,10 +1768,10 @@
     const startButton = document.getElementById('start-drawing');
     const cancelButton = document.getElementById('cancel-drawing');
     const saveParcelsButton = document.getElementById('save-parcels');
-    
-    if (startButton) startButton.style.display = 'inline-block';
-    if (cancelButton) cancelButton.style.display = 'none';
-    if (saveParcelsButton) saveParcelsButton.disabled = habitatParcels.length === 0;
+
+    if (startButton) startButton.parentElement.style.display = 'block';
+    if (cancelButton) cancelButton.parentElement.style.display = 'none';
+    setControlEnabled(saveParcelsButton, habitatParcels.length > 0);
 
     updateParcelsList();
     updateTotalArea();
@@ -2096,10 +2113,10 @@
     const clearButton = document.getElementById('clear-polygon');
     const saveButton = document.getElementById('save-boundary');
     
-    if (startButton) startButton.style.display = 'inline-block';
-    if (cancelButton) cancelButton.style.display = 'none';
-    if (clearButton) clearButton.style.display = 'none';
-    if (saveButton) saveButton.disabled = true;
+    if (startButton) startButton.parentElement.style.display = 'block';
+    if (cancelButton) cancelButton.parentElement.style.display = 'none';
+    if (clearButton) clearButton.parentElement.style.display = 'none';
+    setControlEnabled(saveButton, false);
   }
 
   /**
