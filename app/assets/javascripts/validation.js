@@ -478,6 +478,222 @@
     return (p3[0] - p1[0]) * (p2[1] - p1[1]) - (p2[0] - p1[0]) * (p3[1] - p1[1]);
   }
 
+  // ============================================================
+  // Fill Tool Validation Functions
+  // ============================================================
+
+  /**
+   * Check if two polygons are adjacent (share an edge or touch at more than a single point)
+   * Adjacent means they share at least one edge segment, not just touch at a corner
+   * @param {ol.geom.Polygon} polygon1
+   * @param {ol.geom.Polygon} polygon2
+   * @returns {boolean} True if polygons are adjacent
+   */
+  function arePolygonsAdjacent(polygon1, polygon2) {
+    if (!polygon1 || !polygon2) return false;
+
+    // Quick extent check first - if extents don't touch, they can't be adjacent
+    const extent1 = polygon1.getExtent();
+    const extent2 = polygon2.getExtent();
+    const buffer = EPSILON * 10;  // Small buffer for floating point tolerance
+
+    const bufferedExtent1 = [
+      extent1[0] - buffer,
+      extent1[1] - buffer,
+      extent1[2] + buffer,
+      extent1[3] + buffer
+    ];
+
+    if (!ol.extent.intersects(bufferedExtent1, extent2)) {
+      return false;
+    }
+
+    const coords1 = polygon1.getCoordinates()[0];
+    const coords2 = polygon2.getCoordinates()[0];
+
+    // Count how many vertices of polygon1 lie on the boundary of polygon2
+    let sharedVertexCount = 0;
+    let sharedEdgeCount = 0;
+
+    // Check for shared edges (segments that overlap)
+    for (let i = 0; i < coords1.length - 1; i++) {
+      const seg1Start = coords1[i];
+      const seg1End = coords1[i + 1];
+
+      for (let j = 0; j < coords2.length - 1; j++) {
+        const seg2Start = coords2[j];
+        const seg2End = coords2[j + 1];
+
+        // Check if segments share a portion (overlap)
+        if (doSegmentsOverlap(seg1Start, seg1End, seg2Start, seg2End)) {
+          sharedEdgeCount++;
+          if (sharedEdgeCount >= 1) {
+            return true;  // Found a shared edge
+          }
+        }
+      }
+    }
+
+    // Also check if they share multiple vertices (which indicates adjacency)
+    for (let i = 0; i < coords1.length - 1; i++) {
+      const coord1 = coords1[i];
+      for (let j = 0; j < coords2.length - 1; j++) {
+        const coord2 = coords2[j];
+        if (coordsNearlyEqual(coord1, coord2)) {
+          sharedVertexCount++;
+        }
+      }
+    }
+
+    // If they share at least 2 vertices, they likely share an edge
+    return sharedVertexCount >= 2;
+  }
+
+  /**
+   * Check if two line segments overlap (share more than just an endpoint)
+   * @param {Array} a1 - Start of segment A
+   * @param {Array} a2 - End of segment A
+   * @param {Array} b1 - Start of segment B
+   * @param {Array} b2 - End of segment B
+   * @returns {boolean}
+   */
+  function doSegmentsOverlap(a1, a2, b1, b2) {
+    // First check if segments are collinear
+    const d1 = direction(a1, a2, b1);
+    const d2 = direction(a1, a2, b2);
+
+    if (Math.abs(d1) > EPSILON || Math.abs(d2) > EPSILON) {
+      // Not collinear
+      return false;
+    }
+
+    // Segments are collinear, check if they overlap
+    // Project onto x-axis (or y-axis if segment is vertical)
+    const useY = Math.abs(a2[0] - a1[0]) < EPSILON;
+    const axis = useY ? 1 : 0;
+
+    const aMin = Math.min(a1[axis], a2[axis]);
+    const aMax = Math.max(a1[axis], a2[axis]);
+    const bMin = Math.min(b1[axis], b2[axis]);
+    const bMax = Math.max(b1[axis], b2[axis]);
+
+    // Check for overlap (more than just touching at a point)
+    const overlapStart = Math.max(aMin, bMin);
+    const overlapEnd = Math.min(aMax, bMax);
+    const overlapLength = overlapEnd - overlapStart;
+
+    // Require minimum overlap length to count as shared edge
+    return overlapLength > EPSILON * 10;
+  }
+
+  /**
+   * Check if two coordinates are nearly equal (within tolerance)
+   * @param {Array} c1 - First coordinate [x, y]
+   * @param {Array} c2 - Second coordinate [x, y]
+   * @returns {boolean}
+   */
+  function coordsNearlyEqual(c1, c2) {
+    if (!c1 || !c2) return false;
+    return Math.abs(c1[0] - c2[0]) < EPSILON * 10 && Math.abs(c1[1] - c2[1]) < EPSILON * 10;
+  }
+
+  /**
+   * Check if all polygons in an array form a contiguous (connected) group
+   * Uses graph-based approach: polygons are nodes, adjacency creates edges
+   * All polygons must be reachable from any other polygon
+   * @param {Array} polygons - Array of ol.geom.Polygon
+   * @returns {boolean} True if all polygons are connected
+   */
+  function arePolygonsContiguous(polygons) {
+    if (!polygons || polygons.length === 0) return false;
+    if (polygons.length === 1) return true;
+
+    // Build adjacency graph
+    const n = polygons.length;
+    const adjacencyList = new Array(n).fill(null).map(() => []);
+
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (arePolygonsAdjacent(polygons[i], polygons[j])) {
+          adjacencyList[i].push(j);
+          adjacencyList[j].push(i);
+        }
+      }
+    }
+
+    // BFS to check connectivity
+    const visited = new Array(n).fill(false);
+    const queue = [0];
+    visited[0] = true;
+    let visitedCount = 1;
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      for (const neighbor of adjacencyList[current]) {
+        if (!visited[neighbor]) {
+          visited[neighbor] = true;
+          visitedCount++;
+          queue.push(neighbor);
+        }
+      }
+    }
+
+    // All polygons should be reachable
+    return visitedCount === n;
+  }
+
+  /**
+   * Validate a fill selection before merging
+   * Checks that all selected polygons form a valid contiguous region
+   * @param {Array} selectedPolygons - Array of { geometry: ol.geom.Polygon, ... }
+   * @returns {Object} { valid: boolean, error: string|null }
+   */
+  function validateFillSelection(selectedPolygons) {
+    if (!selectedPolygons || selectedPolygons.length === 0) {
+      return {
+        valid: false,
+        error: 'No polygons selected.'
+      };
+    }
+
+    if (selectedPolygons.length === 1) {
+      // Single polygon is always valid
+      return { valid: true, error: null };
+    }
+
+    // Extract geometries
+    const geometries = selectedPolygons.map(s => {
+      if (s.geometry) {
+        const type = s.geometry.getType();
+        if (type === 'Polygon') {
+          return s.geometry;
+        } else if (type === 'MultiPolygon') {
+          // Convert first polygon of multipolygon
+          const coords = s.geometry.getCoordinates()[0];
+          return new ol.geom.Polygon(coords);
+        }
+      }
+      return null;
+    }).filter(g => g !== null);
+
+    if (geometries.length !== selectedPolygons.length) {
+      return {
+        valid: false,
+        error: 'Some selected features do not have valid polygon geometries.'
+      };
+    }
+
+    // Check contiguity
+    if (!arePolygonsContiguous(geometries)) {
+      return {
+        valid: false,
+        error: 'Selected polygons are not all connected. The red-line boundary must be a single contiguous area.'
+      };
+    }
+
+    return { valid: true, error: null };
+  }
+
   // Export public API
   window.ParcelValidation = {
     validateParcel: validateParcel,
@@ -491,7 +707,11 @@
     isPointOnLineSegment: isPointOnLineSegment,
     getClosestPointOnSegment: getClosestPointOnSegment,
     doPolygonEdgesIntersect: doPolygonEdgesIntersect,
-    doLineSegmentsIntersect: doLineSegmentsIntersect
+    doLineSegmentsIntersect: doLineSegmentsIntersect,
+    // Fill tool validation functions
+    arePolygonsAdjacent: arePolygonsAdjacent,
+    arePolygonsContiguous: arePolygonsContiguous,
+    validateFillSelection: validateFillSelection
   };
 
 })(window);

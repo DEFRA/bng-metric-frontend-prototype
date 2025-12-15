@@ -20,10 +20,19 @@
   
   <ul class="map-controls-list">
     <li>
-      <a href="#" id="start-drawing" data-action="start">Start Drawing</a>
+      <a href="#" id="start-drawing" data-action="start">Draw Polygon</a>
+    </li>
+    <li>
+      <a href="#" id="start-fill" data-action="fill">Fill Polygon</a>
     </li>
     <li style="display: none;">
       <a href="#" id="cancel-drawing" data-action="cancel">Cancel Drawing</a>
+    </li>
+    <li style="display: none;">
+      <a href="#" id="cancel-fill" data-action="cancel-fill">Cancel Fill</a>
+    </li>
+    <li style="display: none;">
+      <a href="#" id="confirm-fill" data-action="confirm-fill">Confirm Selection</a>
     </li>
     <li style="display: none;">
       <a href="#" id="clear-polygon" data-action="clear">Clear Polygon</a>
@@ -96,54 +105,71 @@
     </p>
   </div>
 
+  <div id="fill-selection-info" class="govuk-!-margin-top-4" style="display: none;">
+    <h3 class="govuk-heading-s">Fill Selection</h3>
+    <p class="govuk-body">
+      <strong><span id="selection-count">0</span></strong> polygon(s) selected
+    </p>
+    <p class="govuk-body" style="font-size: 20px; font-weight: bold; color: #1d70b8;">
+      <span id="selection-area">--</span> hectares
+    </p>
+    <p class="govuk-hint">
+      Click on map areas to add or remove polygons from selection.
+    </p>
+  </div>
+
   <hr class="govuk-section-break govuk-section-break--visible govuk-!-margin-top-4 govuk-!-margin-bottom-4">
 
   <details class="govuk-details">
     <summary class="govuk-details__summary">
       <span class="govuk-details__summary-text">
-        How to draw a polygon
+        How to define a boundary
       </span>
     </summary>
     <div class="govuk-details__text">
-      <h3 class="govuk-heading-s">Drawing a polygon:</h3>
+      <p class="govuk-body">You can define your red-line boundary using two methods:</p>
+      
+      <h3 class="govuk-heading-s govuk-!-margin-top-4">Option 1: Fill Polygon (recommended)</h3>
+      <p class="govuk-body">Select existing OS map features like fields, land parcels, or sites:</p>
       <ol class="govuk-list govuk-list--number">
-        <li><strong>Zoom in to at least zoom level 14</strong> - Watch the zoom indicator above the map turn green</li>
-        <li>Wait for snapping data to load (check console for "snapping is now active!" message)</li>
-        <li><strong>Click the "Start Drawing" button</strong> - A circle will appear next to your cursor</li>
-        <li>Move your mouse near features - the circle will turn <strong style="color: #ff8c00;">orange</strong> and jump to the nearest edge when snapping</li>
-        <li>Click to place each vertex at the snapped position (including the first point!)</li>
-        <li>Hover over the first vertex (it will turn <strong style="color: #ff0000;">large and red</strong>) and click to close the polygon</li>
+        <li><strong>Zoom in to at least zoom level 14</strong> - Watch the zoom indicator turn green</li>
+        <li>Click <strong>"Fill Polygon"</strong> to start selection mode</li>
+        <li><strong>Click on a field or land area</strong> - it will highlight in blue when selected</li>
+        <li>Click on <strong>adjacent areas</strong> to add them to your selection (they must be neighbouring)</li>
+        <li>Click a selected polygon again to <strong>deselect</strong> it</li>
+        <li>Click <strong>"Confirm Selection"</strong> when you're happy with the boundary</li>
       </ol>
+      <div class="govuk-inset-text">
+        <strong>Note:</strong> All selected polygons must be adjacent (touching). You cannot select disconnected areas.
+      </div>
+
+      <h3 class="govuk-heading-s govuk-!-margin-top-4">Option 2: Draw Polygon</h3>
+      <p class="govuk-body">Manually draw your boundary with intelligent snapping:</p>
+      <ol class="govuk-list govuk-list--number">
+        <li><strong>Zoom in to at least zoom level 14</strong> - Watch the zoom indicator turn green</li>
+        <li>Click <strong>"Draw Polygon"</strong> to start drawing mode</li>
+        <li>Move your mouse near features - the cursor will snap to edges and corners</li>
+        <li>Click to place each vertex</li>
+        <li>Hover over the first vertex and click to <strong>close the polygon</strong></li>
+      </ol>
+
       <h3 class="govuk-heading-s govuk-!-margin-top-4">Editing a completed polygon:</h3>
       <ol class="govuk-list govuk-list--number">
-        <li>After closing a polygon, <strong>hover over any vertex</strong> - it will enlarge slightly</li>
-        <li><strong>Click and drag</strong> the vertex to a new position - snapping still works!</li>
-        <li>Release to place the vertex at the new (snapped) location</li>
-        <li>To <strong>add a new vertex</strong>, hover over the polygon edge (red line) - a white circle appears</li>
-        <li><strong>Click the white circle</strong> to insert a new vertex at that position</li>
-        <li>The <strong>area in hectares</strong> updates automatically as you edit</li>
-        <li>Click <strong>"Clear Polygon"</strong> to remove it and draw a new one</li>
+        <li><strong>Hover over any vertex</strong> - it will enlarge slightly</li>
+        <li><strong>Click and drag</strong> the vertex to a new position</li>
+        <li>To <strong>add a new vertex</strong>, hover over the polygon edge - a white circle appears</li>
+        <li><strong>Click the white circle</strong> to insert a new vertex</li>
+        <li>Click <strong>"Clear Polygon"</strong> to start over</li>
       </ol>
-      <p class="govuk-body">The drawing tool automatically snaps to OS Zoomstack features:</p>
-      <ul class="govuk-list govuk-list--bullet">
-        <li>Buildings (Local Buildings)</li>
-        <li>Roads (Local, Regional, and National)</li>
-        <li>Waterlines</li>
-        <li>Railways</li>
-        <li>Greenspace</li>
-        <li>Woodland</li>
-      </ul>
+
       <div class="govuk-inset-text govuk-!-margin-top-4">
         <strong>Visual feedback:</strong>
         <ul class="govuk-list govuk-list--bullet govuk-!-margin-top-2">
-          <li><strong style="color: #0096ff;">Blue circle</strong> = cursor position (no snap)</li>
-          <li><strong style="color: #ff8c00;">Orange circle (larger)</strong> = snapped to a feature!</li>
-          <li><strong style="color: #ff0000;">Large red circle</strong> = hover over first vertex to close polygon</li>
+          <li><strong style="color: #1d70b8;">Blue highlight</strong> = selected polygon (Fill mode)</li>
+          <li><strong style="color: #ff8c00;">Orange circle</strong> = snapped to a feature (Draw mode)</li>
+          <li><strong style="color: #ff0000;">Red circle</strong> = hover over first vertex to close</li>
         </ul>
       </div>
-      <p class="govuk-body govuk-!-margin-top-2">
-        <strong>Tip:</strong> Open your browser console (F12) to see detailed status messages and snap events.
-      </p>
     </div>
   </details>
 {% endblock %}

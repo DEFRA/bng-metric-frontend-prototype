@@ -1754,10 +1754,13 @@
     const cancelButton = document.getElementById('cancel-drawing');
     const clearButton = document.getElementById('clear-polygon');
     const saveButton = document.getElementById('save-boundary');
+    const startFillButton = document.getElementById('start-fill');
     
     if (startButton) startButton.parentElement.style.display = 'none';
     if (cancelButton) cancelButton.parentElement.style.display = 'none';
     if (clearButton) clearButton.parentElement.style.display = 'block';
+    // Keep fill button visible so user can add more polygons or replace
+    if (startFillButton) startFillButton.parentElement.style.display = 'block';
     setControlEnabled(saveButton, true);
   }
 
@@ -2258,6 +2261,69 @@
   }
 
   /**
+   * Set polygon from external coordinates (used by Fill tool)
+   * Creates a completed polygon from the provided coordinate array
+   * @param {Array} coords - Array of [x, y] coordinates (closed ring)
+   */
+  function setPolygonFromCoordinates(coords) {
+    if (!coords || coords.length < 4) {
+      console.error('Invalid coordinates for polygon');
+      return false;
+    }
+
+    // Clear any existing polygon
+    if (polygonComplete || isDrawing) {
+      clearPolygon();
+    }
+
+    console.log(`Setting polygon from ${coords.length - 1} vertices`);
+
+    // Set state
+    currentPolygonCoords = coords.map(c => [...c]);
+    placedVertices = [];
+
+    // Create vertex features for each coordinate (except the closing duplicate)
+    for (let i = 0; i < coords.length - 1; i++) {
+      const vertexFeature = new ol.Feature({
+        geometry: new ol.geom.Point(coords[i]),
+        type: 'vertex',
+        isFirst: i === 0,
+        highlighted: false,
+        colorIndex: 0
+      });
+      placedVertices.push(vertexFeature);
+      drawSource.addFeature(vertexFeature);
+    }
+
+    // Create the polygon feature
+    const completedPolygon = new ol.geom.Polygon([currentPolygonCoords]);
+    polygonFeature = new ol.Feature({
+      geometry: completedPolygon,
+      type: 'polygon',
+      colorIndex: 0
+    });
+    drawSource.addFeature(polygonFeature);
+
+    // Set state to complete
+    isDrawing = false;
+    polygonComplete = true;
+    isEditing = true;
+    canClosePolygon = false;
+
+    // Update UI
+    updateUIForCompletePolygon();
+    updateAreaDisplay();
+
+    console.log('✓ Polygon set from coordinates');
+
+    if (onPolygonComplete) {
+      onPolygonComplete();
+    }
+
+    return true;
+  }
+
+  /**
    * Enable or disable snapping to boundary vertices
    */
   function setSnapToBoundaryVertices(enabled) {
@@ -2364,6 +2430,8 @@
     forceRefreshSnapData: fetchSnapData,
     setSnappingEnabled: setSnappingEnabled,
     isSnappingEnabled: isSnappingEnabledFn,
+    // Fill tool integration
+    setPolygonFromCoordinates: setPolygonFromCoordinates,
     // New fine-grained snap controls
     setSnapToBoundaryVertices: setSnapToBoundaryVertices,
     setSnapToBoundaryEdges: setSnapToBoundaryEdges,
@@ -2379,7 +2447,9 @@
     // Internal state accessors for validation
     getHabitatParcels: () => habitatParcels,
     getBoundaryPolygon: () => boundaryPolygon,
-    getDrawSource: () => drawSource
+    getDrawSource: () => drawSource,
+    // Snap index source for fill tool
+    getSnapIndexSource: () => snapIndexSource
   };
 
 })(window);

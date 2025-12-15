@@ -139,6 +139,35 @@ function initRedLineBoundaryMode(map) {
       }
     });
   }
+
+  // Initialize Fill tool for red-line-boundary mode
+  if (window.FillTool && window.FillTool.init) {
+    window.FillTool.init(map, {
+      onSelectionChange: (info) => {
+        console.log(`Fill selection changed: ${info.count} polygons, ${info.totalAreaHectares.toFixed(2)} ha`);
+      },
+      onConfirm: (result) => {
+        console.log('Fill confirmed:', result);
+        showStatus(`Boundary created: ${result.areaHectares.toFixed(2)} hectares`, 'success');
+        // Enable save button and show area display
+        const saveButton = document.getElementById('save-boundary');
+        if (saveButton) {
+          saveButton.classList.remove('disabled');
+        }
+        const areaDisplay = document.getElementById('area-display');
+        const areaValue = document.getElementById('area-value');
+        const areaAcres = document.getElementById('area-acres');
+        if (areaDisplay && areaValue && areaAcres) {
+          areaValue.textContent = result.areaHectares.toFixed(2);
+          areaAcres.textContent = (result.area / 4046.86).toFixed(2);
+          areaDisplay.style.display = 'block';
+        }
+      },
+      onError: (message, type) => {
+        showStatus(message, type || 'warning');
+      }
+    });
+  }
 }
 
 /**
@@ -276,11 +305,54 @@ function setupUIControls(mode) {
   if (startButton) {
     startButton.addEventListener('click', (e) => {
       e.preventDefault();
+      // Cancel fill mode if active
+      if (window.FillTool && window.FillTool.isActive && window.FillTool.isActive()) {
+        window.FillTool.cancelFillMode();
+      }
       if (window.SnapDrawing && window.SnapDrawing.startDrawing) {
         window.SnapDrawing.startDrawing();
         startButton.parentElement.style.display = 'none';
+        const startFillBtn = document.getElementById('start-fill');
+        if (startFillBtn) startFillBtn.parentElement.style.display = 'none';
         if (cancelButton) cancelButton.parentElement.style.display = 'block';
         showStatus('Drawing mode active - click to place vertices', 'info');
+      }
+    });
+  }
+
+  // Fill tool buttons
+  const startFillButton = document.getElementById('start-fill');
+  const cancelFillButton = document.getElementById('cancel-fill');
+  const confirmFillButton = document.getElementById('confirm-fill');
+
+  if (startFillButton) {
+    startFillButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.FillTool && window.FillTool.startFillMode) {
+        window.FillTool.startFillMode();
+        showStatus('Fill mode active - click on polygons to select them', 'info');
+      }
+    });
+  }
+
+  if (cancelFillButton) {
+    cancelFillButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.FillTool && window.FillTool.cancelFillMode) {
+        window.FillTool.cancelFillMode();
+        showStatus('Fill mode cancelled', 'info');
+      }
+    });
+  }
+
+  if (confirmFillButton) {
+    confirmFillButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.FillTool && window.FillTool.confirmSelection) {
+        const success = window.FillTool.confirmSelection();
+        if (!success) {
+          // Error message will be shown by the FillTool
+        }
       }
     });
   }
@@ -292,6 +364,8 @@ function setupUIControls(mode) {
       if (window.SnapDrawing && window.SnapDrawing.cancelDrawing) {
         window.SnapDrawing.cancelDrawing();
         if (startButton) startButton.parentElement.style.display = 'block';
+        const startFillBtn = document.getElementById('start-fill');
+        if (startFillBtn) startFillBtn.parentElement.style.display = 'block';
         cancelButton.parentElement.style.display = 'none';
         showStatus('Drawing cancelled', 'info');
       }
@@ -326,6 +400,10 @@ function setupUIControls(mode) {
       e.preventDefault();
       if (window.SnapDrawing && window.SnapDrawing.clearPolygon) {
         window.SnapDrawing.clearPolygon();
+        // Show both drawing options again
+        if (startButton) startButton.parentElement.style.display = 'block';
+        const startFillBtn = document.getElementById('start-fill');
+        if (startFillBtn) startFillBtn.parentElement.style.display = 'block';
         showStatus('Polygon cleared - draw a new one', 'info');
       }
     });
