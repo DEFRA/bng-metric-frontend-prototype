@@ -227,6 +227,19 @@ async function initHabitatParcelsMode(map, boundaryUrl) {
         }
       });
     }
+
+    // Initialize fill tool for habitat-parcels mode
+    if (window.FillTool && window.FillTool.init) {
+      window.FillTool.init(map, {
+        mode: 'habitat-parcels',
+        onParcelAdded: (parcel) => {
+          console.log('Fill parcel added:', parcel);
+        },
+        onError: (message, type) => {
+          showStatus(message, type || 'warning');
+        }
+      });
+    }
   } catch (error) {
     console.error('Error fetching boundary:', error);
     showStatus('Error loading boundary. Please try again.', 'error');
@@ -314,6 +327,10 @@ function setupUIControls(mode) {
         startButton.parentElement.style.display = 'none';
         const startFillBtn = document.getElementById('start-fill');
         if (startFillBtn) startFillBtn.parentElement.style.display = 'none';
+        const startFillParcelBtn = document.getElementById('start-fill-parcel');
+        if (startFillParcelBtn) startFillParcelBtn.parentElement.style.display = 'none';
+        const startSliceBtn = document.getElementById('start-slice');
+        if (startSliceBtn) startSliceBtn.parentElement.style.display = 'none';
         if (cancelButton) cancelButton.parentElement.style.display = 'block';
         showStatus('Drawing mode active - click to place vertices', 'info');
       }
@@ -366,6 +383,10 @@ function setupUIControls(mode) {
         if (startButton) startButton.parentElement.style.display = 'block';
         const startFillBtn = document.getElementById('start-fill');
         if (startFillBtn) startFillBtn.parentElement.style.display = 'block';
+        const startFillParcelBtn = document.getElementById('start-fill-parcel');
+        if (startFillParcelBtn) startFillParcelBtn.parentElement.style.display = 'block';
+        const startSliceBtn = document.getElementById('start-slice');
+        if (startSliceBtn) startSliceBtn.parentElement.style.display = 'block';
         cancelButton.parentElement.style.display = 'none';
         showStatus('Drawing cancelled', 'info');
       }
@@ -390,6 +411,30 @@ function setupUIControls(mode) {
       e.preventDefault();
       if (window.SliceTool && window.SliceTool.cancelSlice) {
         window.SliceTool.cancelSlice();
+      }
+    });
+  }
+
+  // Fill parcel buttons (habitat-parcels mode)
+  const startFillParcelButton = document.getElementById('start-fill-parcel');
+  const finishFillParcelButton = document.getElementById('finish-fill-parcel');
+
+  if (startFillParcelButton) {
+    startFillParcelButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.FillTool && window.FillTool.startFillModeForParcels) {
+        window.FillTool.startFillModeForParcels();
+        showStatus('Fill mode active - click on OS polygons within the boundary to add as parcels', 'info');
+      }
+    });
+  }
+
+  if (finishFillParcelButton) {
+    finishFillParcelButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.FillTool && window.FillTool.cancelFillMode) {
+        window.FillTool.cancelFillMode();
+        showStatus('Fill mode finished', 'info');
       }
     });
   }

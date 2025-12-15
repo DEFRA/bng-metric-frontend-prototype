@@ -32,13 +32,16 @@
   let previewLayer = null;
   let previewSource = null;
   let isFillModeActive = false;
+  let fillMode = 'red-line-boundary';  // 'red-line-boundary' or 'habitat-parcels'
   let selectedPolygons = [];  // Array of { feature, geometry, layerType }
-  let existingBoundaryGeometry = null;  // Existing red-line boundary to merge with
+  let existingBoundaryGeometry = null;  // Existing red-line boundary to merge with (for red-line mode)
+  let constraintBoundary = null;  // Boundary that parcels must be within (for habitat-parcels mode)
 
   // Callbacks
   let onSelectionChange = null;
   let onConfirm = null;
   let onError = null;
+  let onParcelAdded = null;  // Called when a parcel is added in habitat-parcels mode
 
   // Styling for selected polygons
   const SELECTED_STYLE = new ol.style.Style({
@@ -66,14 +69,22 @@
    * Initialize the fill tool
    * @param {ol.Map} olMap - OpenLayers map instance
    * @param {Object} config - Configuration options
+   * @param {string} config.mode - 'red-line-boundary' or 'habitat-parcels'
+   * @param {Function} config.onSelectionChange - Called when selection changes
+   * @param {Function} config.onConfirm - Called when selection is confirmed
+   * @param {Function} config.onError - Called on error
+   * @param {Function} config.onParcelAdded - Called when a parcel is added (habitat-parcels mode)
    */
   function init(olMap, config = {}) {
     map = olMap;
+    fillMode = config.mode || 'red-line-boundary';
     onSelectionChange = config.onSelectionChange || null;
     onConfirm = config.onConfirm || null;
     onError = config.onError || null;
+    onParcelAdded = config.onParcelAdded || null;
 
     console.log('=== Fill Tool Initializing ===');
+    console.log('Mode:', fillMode);
 
     // Get reference to snap index source from SnapDrawing module
     if (window.SnapDrawing && window.SnapDrawing.getDrawSource) {
@@ -101,7 +112,7 @@
   }
 
   /**
-   * Start fill selection mode
+   * Start fill selection mode for red-line boundary
    */
   function startFillMode() {
     if (isFillModeActive) {
@@ -109,9 +120,11 @@
       return;
     }
 
+    fillMode = 'red-line-boundary';
     isFillModeActive = true;
     selectedPolygons = [];
     existingBoundaryGeometry = null;
+    constraintBoundary = null;
     previewSource.clear();
 
     // If there's an existing polygon from SnapDrawing, capture it for adjacency checking
@@ -138,7 +151,7 @@
     map.on('click', handleFillClick);
     map.on('pointermove', handleFillHover);
 
-    console.log('✏️ Fill mode started - click on polygons to select');
+    console.log('✏️ Fill mode started (red-line-boundary) - click on polygons to select');
     if (existingBoundaryGeometry) {
       console.log('Select adjacent polygons to expand, or non-adjacent to replace');
     }
@@ -147,6 +160,50 @@
     debugAvailablePolygons();
 
     updateUI();
+  }
+
+  /**
+   * Start fill selection mode for habitat parcels
+   * Each selected polygon becomes a new habitat parcel
+   */
+  function startFillModeForParcels() {
+    if (isFillModeActive) {
+      console.warn('Fill mode already active');
+      return;
+    }
+
+    // Get the boundary from SnapDrawing
+    if (window.SnapDrawing && window.SnapDrawing.getBoundaryPolygon) {
+      constraintBoundary = window.SnapDrawing.getBoundaryPolygon();
+    }
+
+    if (!constraintBoundary) {
+      console.error('No boundary available for parcel fill mode');
+      if (onError) {
+        onError('No red-line boundary defined. Please define a boundary first.', 'error');
+      }
+      return;
+    }
+
+    fillMode = 'habitat-parcels';
+    isFillModeActive = true;
+    selectedPolygons = [];
+    existingBoundaryGeometry = null;
+    previewSource.clear();
+
+    // Change cursor
+    map.getTargetElement().style.cursor = 'crosshair';
+
+    // Add click handler
+    map.on('click', handleFillClickForParcels);
+    map.on('pointermove', handleFillHover);
+
+    console.log('✏️ Fill mode started (habitat-parcels) - click on polygons within boundary to add as parcels');
+
+    // Debug: Log available polygon features
+    debugAvailablePolygons();
+
+    updateUIForParcelMode();
   }
 
   /**
@@ -313,6 +370,183 @@
     }
 
     return null;
+  }
+
+  /**
+   * Handle click events in fill mode for habitat parcels
+   * Each click adds a new parcel if valid
+   * @param {ol.MapBrowserEvent} evt
+   */
+  function handleFillClickForParcels(evt) {
+    if (!isFillModeActive || fillMode !== 'habitat-parcels') {
+      return;
+    }
+
+    const clickedPolygon = findPolygonAtPixel(evt.pixel);
+
+    if (clickedPolygon) {
+      // Validate that the polygon is within the boundary
+      const validation = validatePolygonWithinBoundary(clickedPolygon.geometry);
+      
+      if (!validation.valid) {
+        console.warn('Selected polygon is outside boundary:', validation.error);
+        if (onError) {
+          onError(validation.error, 'warning');
+        }
+        return;
+      }
+
+      // Check for overlap with existing parcels
+      const overlapCheck = checkOverlapWithExistingParcels(clickedPolygon.geometry);
+      if (!overlapCheck.valid) {
+        console.warn('Selected polygon overlaps with existing parcel');
+        if (onError) {
+          onError(overlapCheck.error, 'warning');
+        }
+        return;
+      }
+
+      // Add as a new parcel
+      addPolygonAsParcel(clickedPolygon);
+    } else {
+      console.log('No polygon feature found at click location');
+      
+      // Additional debug: check for ANY polygon at this location
+      const anyPolygon = findAnyPolygonAtPixel(evt.pixel);
+      if (anyPolygon) {
+        // Check if it's outside the boundary
+        const validation = validatePolygonWithinBoundary(anyPolygon.geometry);
+        if (!validation.valid) {
+          if (onError) {
+            onError('This polygon is outside the red-line boundary and cannot be selected.', 'warning');
+          }
+        } else {
+          if (onError) {
+            onError(`Found a "${anyPolygon.layerType}" feature here, but it's not a land/site polygon.`, 'info');
+          }
+        }
+      } else {
+        if (onError) {
+          onError('No OS polygon found at this location.', 'info');
+        }
+      }
+    }
+  }
+
+  /**
+   * Validate that a polygon is completely within the constraint boundary
+   * @param {ol.geom.Geometry} geometry - The polygon to validate
+   * @returns {Object} { valid: boolean, error: string|null }
+   */
+  function validatePolygonWithinBoundary(geometry) {
+    if (!constraintBoundary) {
+      return { valid: false, error: 'No boundary defined for validation.' };
+    }
+
+    const poly = geometryToPolygon(geometry);
+    if (!poly) {
+      return { valid: false, error: 'Invalid polygon geometry.' };
+    }
+
+    // Use validation module if available
+    if (window.ParcelValidation && window.ParcelValidation.isPolygonWithinBoundary) {
+      if (window.ParcelValidation.isPolygonWithinBoundary(poly, constraintBoundary)) {
+        return { valid: true, error: null };
+      } else {
+        return { valid: false, error: 'This polygon extends outside the red-line boundary.' };
+      }
+    }
+
+    // Fallback: check if all vertices are within boundary
+    const coords = poly.getCoordinates()[0];
+    for (const coord of coords) {
+      if (!constraintBoundary.intersectsCoordinate(coord)) {
+        return { valid: false, error: 'This polygon extends outside the red-line boundary.' };
+      }
+    }
+
+    return { valid: true, error: null };
+  }
+
+  /**
+   * Check if a polygon overlaps with any existing habitat parcels
+   * @param {ol.geom.Geometry} geometry - The polygon to check
+   * @returns {Object} { valid: boolean, error: string|null }
+   */
+  function checkOverlapWithExistingParcels(geometry) {
+    const poly = geometryToPolygon(geometry);
+    if (!poly) {
+      return { valid: false, error: 'Invalid polygon geometry.' };
+    }
+
+    // Get existing parcels from SnapDrawing
+    let existingParcels = [];
+    if (window.SnapDrawing && window.SnapDrawing.getHabitatParcels) {
+      existingParcels = window.SnapDrawing.getHabitatParcels();
+    }
+
+    if (existingParcels.length === 0) {
+      return { valid: true, error: null };
+    }
+
+    // Use validation module to check overlaps
+    if (window.ParcelValidation && window.ParcelValidation.doPolygonsOverlap) {
+      for (let i = 0; i < existingParcels.length; i++) {
+        const parcelGeom = existingParcels[i].feature.getGeometry();
+        if (window.ParcelValidation.doPolygonsOverlap(poly, parcelGeom)) {
+          return { valid: false, error: `This polygon overlaps with parcel ${i + 1}.` };
+        }
+      }
+    }
+
+    return { valid: true, error: null };
+  }
+
+  /**
+   * Add a selected polygon as a new habitat parcel
+   * @param {Object} polygonInfo - { feature, geometry, layerType }
+   */
+  function addPolygonAsParcel(polygonInfo) {
+    const poly = geometryToPolygon(polygonInfo.geometry);
+    if (!poly) {
+      console.error('Failed to convert geometry to polygon');
+      return;
+    }
+
+    const coords = poly.getCoordinates()[0];
+
+    console.log(`Adding polygon as parcel from layer: ${polygonInfo.layerType}`);
+    console.log(`Parcel has ${coords.length - 1} vertices`);
+
+    // Use SnapDrawing to add the parcel
+    if (window.SnapDrawing && window.SnapDrawing.addParcelFromCoordinates) {
+      const success = window.SnapDrawing.addParcelFromCoordinates(coords);
+      if (success) {
+        console.log('✓ Parcel added successfully');
+        if (onError) {
+          onError('Parcel added successfully!', 'success');
+        }
+        if (onParcelAdded) {
+          onParcelAdded({
+            geometry: poly,
+            coordinates: coords,
+            area: poly.getArea(),
+            areaHectares: poly.getArea() / 10000,
+            layerType: polygonInfo.layerType
+          });
+        }
+      } else {
+        console.error('Failed to add parcel');
+        if (onError) {
+          onError('Failed to add parcel. Please try again.', 'error');
+        }
+      }
+    } else {
+      console.error('SnapDrawing.addParcelFromCoordinates not available');
+      if (onError) {
+        onError('Unable to add parcel - drawing module not ready.', 'error');
+      }
+    }
   }
 
   /**
@@ -1021,13 +1255,20 @@
       return;
     }
 
+    const wasParcelMode = fillMode === 'habitat-parcels';
+    
     isFillModeActive = false;
     selectedPolygons = [];
     existingBoundaryGeometry = null;
+    constraintBoundary = null;
     previewSource.clear();
 
-    // Remove event handlers
-    map.un('click', handleFillClick);
+    // Remove event handlers based on mode
+    if (wasParcelMode) {
+      map.un('click', handleFillClickForParcels);
+    } else {
+      map.un('click', handleFillClick);
+    }
     map.un('pointermove', handleFillHover);
 
     // Reset cursor
@@ -1035,7 +1276,12 @@
 
     console.log('Fill mode cancelled');
 
-    updateUI();
+    // Update appropriate UI
+    if (wasParcelMode) {
+      updateUIForParcelMode();
+    } else {
+      updateUI();
+    }
 
     if (onSelectionChange) {
       onSelectionChange(getSelectionInfo());
@@ -1098,11 +1344,43 @@
   }
 
   /**
+   * Update UI elements for parcel fill mode
+   */
+  function updateUIForParcelMode() {
+    const startFillParcelBtn = document.getElementById('start-fill-parcel');
+    const finishFillParcelBtn = document.getElementById('finish-fill-parcel');
+    const startDrawBtn = document.getElementById('start-drawing');
+    const startSliceBtn = document.getElementById('start-slice');
+
+    if (isFillModeActive && fillMode === 'habitat-parcels') {
+      // Parcel fill mode active
+      if (startFillParcelBtn) startFillParcelBtn.parentElement.style.display = 'none';
+      if (startDrawBtn) startDrawBtn.parentElement.style.display = 'none';
+      if (startSliceBtn) startSliceBtn.parentElement.style.display = 'none';
+      if (finishFillParcelBtn) finishFillParcelBtn.parentElement.style.display = 'block';
+    } else {
+      // Parcel fill mode inactive
+      if (startFillParcelBtn) startFillParcelBtn.parentElement.style.display = 'block';
+      if (startDrawBtn) startDrawBtn.parentElement.style.display = 'block';
+      if (startSliceBtn) startSliceBtn.parentElement.style.display = 'block';
+      if (finishFillParcelBtn) finishFillParcelBtn.parentElement.style.display = 'none';
+    }
+  }
+
+  /**
    * Check if fill mode is currently active
    * @returns {boolean}
    */
   function isActive() {
     return isFillModeActive;
+  }
+
+  /**
+   * Get current fill mode
+   * @returns {string} 'red-line-boundary' or 'habitat-parcels'
+   */
+  function getMode() {
+    return fillMode;
   }
 
   /**
@@ -1125,10 +1403,12 @@
   window.FillTool = {
     init: init,
     startFillMode: startFillMode,
+    startFillModeForParcels: startFillModeForParcels,
     cancelFillMode: cancelFillMode,
     confirmSelection: confirmSelection,
     clearSelection: clearSelection,
     isActive: isActive,
+    getMode: getMode,
     getSelectionInfo: getSelectionInfo,
     getSelectionCount: getSelectionCount,
     getMergedGeometry: getMergedGeometry

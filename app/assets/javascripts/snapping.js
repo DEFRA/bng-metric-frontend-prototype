@@ -1280,6 +1280,99 @@
   }
 
   /**
+   * Add a parcel from external coordinates (used by Fill tool)
+   * Creates a new habitat parcel from the provided coordinate array
+   * @param {Array} coords - Array of [x, y] coordinates (closed ring)
+   * @returns {boolean} True if parcel was added successfully
+   */
+  function addParcelFromCoordinates(coords) {
+    if (!coords || coords.length < 4) {
+      console.error('Invalid coordinates for parcel');
+      return false;
+    }
+
+    if (currentMode !== 'habitat-parcels') {
+      console.error('addParcelFromCoordinates only works in habitat-parcels mode');
+      return false;
+    }
+
+    console.log(`Adding parcel from ${coords.length - 1} vertices`);
+
+    // Ensure the ring is closed
+    const parcelCoords = coords.map(c => [...c]);
+    const first = parcelCoords[0];
+    const last = parcelCoords[parcelCoords.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      parcelCoords.push([...first]);
+    }
+
+    // Create the polygon geometry
+    const completedPolygon = new ol.geom.Polygon([parcelCoords]);
+
+    // Get color for this parcel
+    const colorIndex = habitatParcels.length % 8;  // 8 colors available
+
+    // Create polygon feature
+    const parcelFeature = new ol.Feature({
+      geometry: completedPolygon,
+      type: 'parcel',
+      colorIndex: colorIndex
+    });
+    drawSource.addFeature(parcelFeature);
+
+    // Create vertex features (hidden for completed parcels but needed for editing)
+    const vertexFeatures = [];
+    for (let i = 0; i < parcelCoords.length - 1; i++) {
+      const vertexFeature = new ol.Feature({
+        geometry: new ol.geom.Point(parcelCoords[i]),
+        type: 'vertex',
+        isFirst: i === 0,
+        highlighted: false,
+        colorIndex: colorIndex
+      });
+      vertexFeatures.push(vertexFeature);
+      drawSource.addFeature(vertexFeature);
+    }
+
+    // Store the parcel
+    const parcel = {
+      feature: parcelFeature,
+      coords: parcelCoords,
+      vertices: vertexFeatures,
+      colorIndex: colorIndex
+    };
+    habitatParcels.push(parcel);
+
+    console.log(`✅ Parcel ${habitatParcels.length} added from fill`);
+
+    // Validate the parcel
+    if (window.ParcelValidation && window.ParcelValidation.validateParcel) {
+      const validationResult = window.ParcelValidation.validateParcel(
+        completedPolygon,
+        boundaryPolygon,
+        habitatParcels,
+        habitatParcels.length - 1
+      );
+      if (!validationResult.valid) {
+        console.warn('⚠️ Parcel has validation issues:', validationResult.error);
+        if (onValidationError) {
+          onValidationError(`Warning: ${validationResult.error} You can edit the parcel before saving.`);
+        }
+      }
+    }
+
+    // Update UI
+    updateUIForHabitatParcels();
+    updateTotalArea();
+
+    if (onParcelAdded) {
+      onParcelAdded(parcel, habitatParcels.length - 1);
+    }
+
+    return true;
+  }
+
+  /**
    * Validate all habitat parcels before saving
    * Wrapper function that calls the validation module with internal state
    * @returns {Object} { valid: boolean, errors: string[] }
@@ -2449,7 +2542,9 @@
     getBoundaryPolygon: () => boundaryPolygon,
     getDrawSource: () => drawSource,
     // Snap index source for fill tool
-    getSnapIndexSource: () => snapIndexSource
+    getSnapIndexSource: () => snapIndexSource,
+    // Add parcel from external coordinates (for fill tool)
+    addParcelFromCoordinates: addParcelFromCoordinates
   };
 
 })(window);
