@@ -237,7 +237,7 @@
       source: boundaryVerticesSource,
       style: new ol.style.Style({
         image: new ol.style.Circle({
-          radius: 6,
+          radius: 4,
           fill: new ol.style.Fill({ color: 'rgba(212, 53, 28, 0.8)' }),  // Red to match boundary
           stroke: new ol.style.Stroke({ 
             color: 'white', 
@@ -257,29 +257,29 @@
       style: function(feature) {
         const snapType = feature.get('snapType') || SNAP_TYPE.NONE;
         
-        let radius = 6;
+        let radius = 4;
         let fillColor = 'rgba(0, 150, 255, 0.6)';  // Blue for no snap
         let strokeWidth = 2;
         
         // Apply distinct styling based on snap type
         if (snapType === SNAP_TYPE.BOUNDARY_VERTEX) {
-          radius = 10;
+          radius = 6;
           fillColor = 'rgba(212, 53, 28, 0.8)';  // Red for boundary vertex
-          strokeWidth = 3;
+          strokeWidth = 2;
         } else if (snapType === SNAP_TYPE.PARCEL_VERTEX) {
-          radius = 10;
+          radius = 6;
           fillColor = 'rgba(174, 37, 115, 0.8)';  // Magenta for parcel vertex
-          strokeWidth = 3;
+          strokeWidth = 2;
         } else if (snapType === SNAP_TYPE.BOUNDARY_EDGE) {
-          radius = 8;
+          radius = 5;
           fillColor = 'rgba(255, 140, 0, 0.8)';  // Orange for boundary edge
           strokeWidth = 2;
         } else if (snapType === SNAP_TYPE.PARCEL_EDGE) {
-          radius = 8;
+          radius = 5;
           fillColor = 'rgba(255, 140, 0, 0.8)';  // Orange for parcel edge
           strokeWidth = 2;
         } else if (snapType === SNAP_TYPE.OS_FEATURE) {
-          radius = 8;
+          radius = 5;
           fillColor = 'rgba(255, 165, 0, 0.8)';  // Orange for OS feature
           strokeWidth = 2;
         }
@@ -316,7 +316,7 @@
     return new ol.style.Style({
       stroke: new ol.style.Stroke({
         color: 'rgba(220, 0, 0, 1)',
-        width: 3,
+        width: 2,
         lineDash: [10, 5]  // Dashed line for boundary
       }),
       fill: null  // No fill - only border
@@ -358,7 +358,7 @@
         }
       }
       
-      let radius = 5;
+      let radius = 3;
       let fillColor = currentMode === 'habitat-parcels' 
         ? PARCEL_COLORS[colorIndex % PARCEL_COLORS.length].stroke 
         : 'rgba(255, 100, 0, 0.8)';
@@ -366,17 +366,17 @@
       let strokeWidth = 2;
       
       if (isBeingDragged) {
-        radius = 8;
+        radius = 5;
         fillColor = 'rgba(0, 150, 255, 0.9)';
         strokeColor = 'blue';
-        strokeWidth = 3;
+        strokeWidth = 2;
       } else if (isHighlighted) {
-        radius = 9;
+        radius = 6;
         fillColor = 'rgba(255, 0, 0, 0.9)';
         strokeColor = 'rgba(200, 0, 0, 1)';
-        strokeWidth = 3;
+        strokeWidth = 2;
       } else if (isHovered && (polygonComplete || editingParcelIndex >= 0)) {
-        radius = 7;
+        radius = 5;
         fillColor = 'rgba(255, 150, 0, 0.9)';
         strokeColor = 'rgba(255, 200, 0, 1)';
         strokeWidth = 2;
@@ -401,7 +401,7 @@
         return new ol.style.Style({
           stroke: new ol.style.Stroke({
             color: colors.stroke,
-            width: 3
+            width: 2
           }),
           fill: new ol.style.Fill({
             color: colors.fill
@@ -412,7 +412,7 @@
         return new ol.style.Style({
           stroke: new ol.style.Stroke({
             color: 'rgba(220, 0, 0, 1)',
-            width: 3
+            width: 2
           }),
           fill: new ol.style.Fill({
             color: 'rgba(220, 0, 0, 0.15)'
@@ -422,7 +422,7 @@
     } else if (type === 'ghost-vertex') {
       return new ol.style.Style({
         image: new ol.style.Circle({
-          radius: 5,
+          radius: 3,
           fill: new ol.style.Fill({ color: 'rgba(255, 255, 255, 0.8)' }),
           stroke: new ol.style.Stroke({ 
             color: currentMode === 'habitat-parcels' ? 'rgba(29, 112, 184, 1)' : 'rgba(220, 0, 0, 1)',

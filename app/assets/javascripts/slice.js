@@ -50,40 +50,40 @@
   // Styles - matching snapping.js colors
   const BOUNDARY_VERTEX_STYLE = new ol.style.Style({
     image: new ol.style.Circle({
-      radius: 12,
+      radius: 8,
       fill: new ol.style.Fill({ color: 'rgba(212, 53, 28, 0.9)' }),  // Red for boundary vertex
-      stroke: new ol.style.Stroke({ color: 'white', width: 3 })
+      stroke: new ol.style.Stroke({ color: 'white', width: 2 })
     })
   });
 
   const PARCEL_VERTEX_STYLE = new ol.style.Style({
     image: new ol.style.Circle({
-      radius: 12,
+      radius: 8,
       fill: new ol.style.Fill({ color: 'rgba(174, 37, 115, 0.9)' }),  // Magenta for parcel vertex
-      stroke: new ol.style.Stroke({ color: 'white', width: 3 })
+      stroke: new ol.style.Stroke({ color: 'white', width: 2 })
     })
   });
 
   const EDGE_SNAP_STYLE = new ol.style.Style({
     image: new ol.style.Circle({
-      radius: 10,
+      radius: 6,
       fill: new ol.style.Fill({ color: 'rgba(255, 140, 0, 0.9)' }),  // Orange for edge
-      stroke: new ol.style.Stroke({ color: 'white', width: 3 })
+      stroke: new ol.style.Stroke({ color: 'white', width: 2 })
     })
   });
 
   const START_POINT_STYLE = new ol.style.Style({
     image: new ol.style.Circle({
-      radius: 14,
+      radius: 9,
       fill: new ol.style.Fill({ color: 'rgba(0, 184, 255, 0.9)' }),  // Cyan for start
-      stroke: new ol.style.Stroke({ color: 'white', width: 3 })
+      stroke: new ol.style.Stroke({ color: 'white', width: 2 })
     })
   });
 
   const SLICE_LINE_STYLE = new ol.style.Style({
     stroke: new ol.style.Stroke({
       color: 'rgba(0, 184, 255, 1)',
-      width: 4,
+      width: 2,
       lineDash: [12, 8]
     })
   });

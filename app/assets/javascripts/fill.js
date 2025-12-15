@@ -47,7 +47,7 @@
   const SELECTED_STYLE = new ol.style.Style({
     stroke: new ol.style.Stroke({
       color: 'rgba(29, 112, 184, 1)',  // GOV.UK blue
-      width: 3,
+      width: 2,
       lineDash: [8, 4]
     }),
     fill: new ol.style.Fill({
@@ -58,7 +58,7 @@
   const HOVER_STYLE = new ol.style.Style({
     stroke: new ol.style.Stroke({
       color: 'rgba(255, 165, 0, 1)',  // Orange
-      width: 2
+      width: 1.5
     }),
     fill: new ol.style.Fill({
       color: 'rgba(255, 165, 0, 0.2)'
