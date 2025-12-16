@@ -589,11 +589,17 @@
 
       // Add to parcels array
       if (habitatParcels) {
+        // Get default BNG properties from HabitatAttribution module if available
+        const bng = window.HabitatAttribution && window.HabitatAttribution.getDefaultBngData
+          ? window.HabitatAttribution.getDefaultBngData()
+          : { module: 'area', baseline: true, broadHabitat: null, habitatType: null, condition: null, strategicSignificance: 'Low', irreplaceable: false, distinctiveness: null, userComments: '' };
+        
         habitatParcels.push({
           feature: feature,
           coords: coords,
           vertices: vertices,
-          colorIndex: colorIndex
+          colorIndex: colorIndex,
+          bng: bng
         });
         console.log('✓ Created parcel', habitatParcels.length, 'with colorIndex', colorIndex, 'and', coords.length - 1, 'vertices');
       }

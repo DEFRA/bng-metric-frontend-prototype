@@ -202,10 +202,29 @@ async function initHabitatParcelsMode(map, boundaryUrl) {
         onParcelAdded: (parcel, index) => {
           console.log(`Parcel ${index + 1} added`);
           showStatus(`Parcel ${index + 1} added successfully`, 'success');
+          // Refresh form if HabitatAttribution is initialized
+          if (window.HabitatAttribution && window.HabitatAttribution.renderForm) {
+            window.HabitatAttribution.renderForm();
+          }
         },
         onParcelRemoved: (index) => {
           console.log(`Parcel removed`);
           showStatus('Parcel removed', 'info');
+          // Refresh form if HabitatAttribution is initialized
+          if (window.HabitatAttribution && window.HabitatAttribution.renderForm) {
+            window.HabitatAttribution.renderForm();
+          }
+        },
+        onParcelSelected: (index) => {
+          console.log(`Parcel selected: ${index}`);
+          // Sync selection to HabitatAttribution module
+          if (window.HabitatAttribution) {
+            if (index >= 0) {
+              window.HabitatAttribution.selectParcel(index);
+            } else {
+              window.HabitatAttribution.deselectParcel();
+            }
+          }
         },
         onValidationError: (error) => {
           showStatus(error, 'error');
@@ -213,11 +232,51 @@ async function initHabitatParcelsMode(map, boundaryUrl) {
       });
     }
 
+    // Initialize HabitatAttribution module for baseline habitat data entry
+    if (window.HabitatAttribution && window.HabitatAttribution.init) {
+      window.HabitatAttribution.init({
+        onSelectionChange: (index) => {
+          console.log(`HabitatAttribution selection changed to: ${index}`);
+          // Sync selection back to SnapDrawing
+          if (window.SnapDrawing) {
+            if (index >= 0) {
+              window.SnapDrawing.selectParcel(index);
+            } else {
+              window.SnapDrawing.deselectParcel();
+            }
+          }
+        },
+        onValidationChange: (index, valid, errors) => {
+          console.log(`Parcel ${index + 1} validation: ${valid ? 'valid' : 'invalid'}`, errors);
+          // Update save button state based on all parcels validation
+          updateSaveButtonState();
+        }
+      });
+
+      // Set up deselect button handler
+      const deselectBtn = document.getElementById('deselect-parcel-btn');
+      if (deselectBtn) {
+        deselectBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (window.HabitatAttribution && window.HabitatAttribution.deselectParcel) {
+            window.HabitatAttribution.deselectParcel();
+          }
+          if (window.SnapDrawing && window.SnapDrawing.deselectParcel) {
+            window.SnapDrawing.deselectParcel();
+          }
+        });
+      }
+    }
+
     // Initialize slice tool for habitat-parcels mode
     if (window.SliceTool && window.SliceTool.init) {
       window.SliceTool.init(map, {
         onSliceComplete: () => {
           console.log('Slice complete');
+          // Refresh form after slice
+          if (window.HabitatAttribution && window.HabitatAttribution.renderForm) {
+            window.HabitatAttribution.renderForm();
+          }
         },
         onSliceCancel: () => {
           console.log('Slice cancelled');
@@ -234,6 +293,10 @@ async function initHabitatParcelsMode(map, boundaryUrl) {
         mode: 'habitat-parcels',
         onParcelAdded: (parcel) => {
           console.log('Fill parcel added:', parcel);
+          // Refresh form after fill
+          if (window.HabitatAttribution && window.HabitatAttribution.renderForm) {
+            window.HabitatAttribution.renderForm();
+          }
         },
         onError: (message, type) => {
           showStatus(message, type || 'warning');
@@ -244,6 +307,34 @@ async function initHabitatParcelsMode(map, boundaryUrl) {
     console.error('Error fetching boundary:', error);
     showStatus('Error loading boundary. Please try again.', 'error');
   }
+}
+
+/**
+ * Update the save button state based on all parcels validation
+ */
+function updateSaveButtonState() {
+  const saveParcelsButton = document.getElementById('save-parcels');
+  if (!saveParcelsButton) return;
+
+  // Check if we have any parcels
+  let parcelCount = 0;
+  if (window.SnapDrawing && window.SnapDrawing.getParcelCount) {
+    parcelCount = window.SnapDrawing.getParcelCount();
+  }
+
+  if (parcelCount === 0) {
+    setControlEnabled(saveParcelsButton, false);
+    return;
+  }
+
+  // Check if all parcels are valid
+  let allValid = true;
+  if (window.HabitatAttribution && window.HabitatAttribution.validateAllParcels) {
+    const validation = window.HabitatAttribution.validateAllParcels();
+    allValid = validation.valid;
+  }
+
+  setControlEnabled(saveParcelsButton, allValid);
 }
 
 /**

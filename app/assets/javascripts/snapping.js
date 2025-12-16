@@ -123,9 +123,10 @@
   let snapToParcelEdges = true;
 
   // Habitat parcels mode - multiple polygons
-  let habitatParcels = [];  // Array of { feature, coords, vertices, colorIndex }
+  let habitatParcels = [];  // Array of { feature, coords, vertices, colorIndex, bng }
   let currentParcelIndex = -1;  // Index of parcel being drawn, -1 if not drawing
   let editingParcelIndex = -1;  // Index of parcel being edited, -1 if not editing
+  let selectedParcelIndex = -1;  // Index of parcel selected for attribution, -1 if none
 
   // Editing state
   let draggedVertex = null;
@@ -146,6 +147,7 @@
   let onParcelAdded = null;
   let onParcelRemoved = null;
   let onValidationError = null;
+  let onParcelSelected = null;
 
   /**
    * Initialize the snapping system with configuration
@@ -157,6 +159,7 @@
    * @param {Function} config.onParcelAdded - Callback when parcel is added (habitat-parcels mode)
    * @param {Function} config.onParcelRemoved - Callback when parcel is removed (habitat-parcels mode)
    * @param {Function} config.onValidationError - Callback for validation errors
+   * @param {Function} config.onParcelSelected - Callback when parcel is selected for attribution
    */
   function initWithConfig(olMap, config = {}) {
     map = olMap;
@@ -165,6 +168,7 @@
     onParcelAdded = config.onParcelAdded || null;
     onParcelRemoved = config.onParcelRemoved || null;
     onValidationError = config.onValidationError || null;
+    onParcelSelected = config.onParcelSelected || null;
 
     console.log('=== Snapping System Initializing ===');
     console.log('Mode:', currentMode);
@@ -1146,7 +1150,17 @@
    * Handle click to place vertex or close polygon
    */
   function handleSingleClick(evt) {
-    if (isDragging || justFinishedDragging || !isDrawing) {
+    if (isDragging || justFinishedDragging) {
+      return;
+    }
+
+    // If not drawing, check for parcel selection click (habitat-parcels mode only)
+    if (!isDrawing && currentMode === 'habitat-parcels' && editingParcelIndex < 0) {
+      handleParcelSelectionClick(evt);
+      return;
+    }
+
+    if (!isDrawing) {
       return;
     }
 
@@ -1158,6 +1172,51 @@
     const snapCoord = lastSnapCoord || evt.coordinate;
     const isFirstVertex = currentPolygonCoords.length === 0;
     placeVertex(snapCoord, isFirstVertex);
+  }
+
+  /**
+   * Handle click on a parcel for selection (habitat-parcels mode)
+   * @param {ol.MapBrowserEvent} evt
+   */
+  function handleParcelSelectionClick(evt) {
+    // Check if click is on a parcel polygon
+    const clickedParcelIndex = findParcelAtPixel(evt.pixel);
+    
+    if (clickedParcelIndex >= 0) {
+      // Toggle selection - if already selected, deselect; otherwise select
+      if (selectedParcelIndex === clickedParcelIndex) {
+        deselectParcel();
+      } else {
+        selectParcel(clickedParcelIndex);
+      }
+    }
+  }
+
+  /**
+   * Find which parcel (if any) is at the given pixel
+   * @param {Array} pixel - [x, y] pixel coordinates
+   * @returns {number} Parcel index or -1 if no parcel found
+   */
+  function findParcelAtPixel(pixel) {
+    let foundIndex = -1;
+    
+    map.forEachFeatureAtPixel(pixel, (feature, layer) => {
+      // Check if this is a parcel polygon feature
+      if (feature.get('type') === 'polygon' || feature.get('type') === 'parcel') {
+        // Find which parcel this feature belongs to
+        for (let i = 0; i < habitatParcels.length; i++) {
+          if (habitatParcels[i].feature === feature) {
+            foundIndex = i;
+            return true; // Stop iteration
+          }
+        }
+      }
+    }, {
+      layerFilter: (layer) => layer === drawLayer,
+      hitTolerance: 3
+    });
+    
+    return foundIndex;
   }
 
   /**
@@ -1233,7 +1292,8 @@
         feature: polygonFeature,
         coords: [...currentPolygonCoords],
         vertices: [...placedVertices],
-        colorIndex: colorIndex
+        colorIndex: colorIndex,
+        bng: getDefaultBngProperties()
       };
       habitatParcels.push(parcel);
       currentParcelIndex = habitatParcels.length - 1;
@@ -1339,7 +1399,8 @@
       feature: parcelFeature,
       coords: parcelCoords,
       vertices: vertexFeatures,
-      colorIndex: colorIndex
+      colorIndex: colorIndex,
+      bng: getDefaultBngProperties()
     };
     habitatParcels.push(parcel);
 
@@ -1442,6 +1503,11 @@
       const areaSqMeters = geom.getArea();
       const areaHectares = areaSqMeters / 10000;
 
+      // Get BNG properties (use defaults if not set)
+      const bng = parcel.bng || getDefaultBngProperties();
+      // Update areaHa in BNG data
+      bng.areaHa = areaHectares;
+
       return {
         type: 'Feature',
         geometry: {
@@ -1451,7 +1517,8 @@
         properties: {
           parcelIndex: index,
           areaHectares: areaHectares,
-          areaSqMeters: areaSqMeters
+          areaSqMeters: areaSqMeters,
+          bng: bng
         }
       };
     });
@@ -1891,37 +1958,62 @@
       const areaHectares = roundToTwoDecimals(areaSqMeters / 10000);
       const colors = PARCEL_COLORS[parcel.colorIndex % PARCEL_COLORS.length];
       const isEditing = editingParcelIndex === index;
+      const isSelected = selectedParcelIndex === index;
       const isAnotherEditing = editingParcelIndex >= 0 && editingParcelIndex !== index;
 
-      // Edit/Done button
+      // Check if parcel has complete BNG data
+      const bng = parcel.bng || {};
+      const isComplete = bng.broadHabitat && bng.habitatType && bng.condition;
+
+      // Determine parcel name - use broad habitat if set, otherwise "Parcel N"
+      const parcelName = bng.broadHabitat ? bng.broadHabitat : `Parcel ${index + 1}`;
+
+      // Status indicator
+      let statusIndicator = '';
+      if (isComplete) {
+        statusIndicator = '<span class="govuk-tag govuk-tag--green" style="font-size: 10px; margin-left: 5px;">Complete</span>';
+      } else {
+        statusIndicator = '<span class="govuk-tag govuk-tag--red" style="font-size: 10px; margin-left: 5px;">Incomplete</span>';
+      }
+
+      // Edit shape button
       let editButton = '';
       if (isEditing) {
-        editButton = `<button type="button" class="govuk-link" style="color: #00703c; cursor: pointer; border: none; background: none; font-weight: bold;" onclick="window.SnapDrawing.stopEditingParcel()">Done</button>`;
+        editButton = `<button type="button" class="govuk-link" style="color: #00703c; cursor: pointer; border: none; background: none; font-weight: bold;" onclick="event.stopPropagation(); window.SnapDrawing.stopEditingParcel()">Done</button>`;
       } else if (!isAnotherEditing && !isDrawing) {
-        editButton = `<button type="button" class="govuk-link" style="color: #1d70b8; cursor: pointer; border: none; background: none;" onclick="window.SnapDrawing.startEditingParcel(${index})">Edit</button>`;
+        editButton = `<button type="button" class="govuk-link" style="color: #1d70b8; cursor: pointer; border: none; background: none;" onclick="event.stopPropagation(); window.SnapDrawing.startEditingParcel(${index})">Edit shape</button>`;
       }
 
       // Remove button (only show if not editing another parcel)
       let removeButton = '';
       if (!isAnotherEditing && !isDrawing) {
-        removeButton = `<button type="button" class="govuk-link" style="color: #d4351c; cursor: pointer; border: none; background: none; margin-left: 10px;" onclick="window.SnapDrawing.removeParcel(${index})">Remove</button>`;
+        removeButton = `<button type="button" class="govuk-link" style="color: #d4351c; cursor: pointer; border: none; background: none; margin-left: 10px;" onclick="event.stopPropagation(); window.SnapDrawing.removeParcel(${index})">Remove</button>`;
       }
 
-      // Highlight the row if editing
-      const rowStyle = isEditing 
-        ? 'display: flex; align-items: center; justify-content: space-between; padding: 8px; border-bottom: 1px solid #b1b4b6; background: #fef7e5; margin: -8px; margin-bottom: 0; padding: 8px;'
-        : 'display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #b1b4b6;';
+      // Highlight the row if editing or selected
+      let rowStyle = 'display: flex; flex-direction: column; padding: 8px; border-bottom: 1px solid #b1b4b6;';
+      if (isEditing) {
+        rowStyle += ' background: #fef7e5;';
+      } else if (isSelected) {
+        rowStyle += ' background: #e8f4f8; border-left: 4px solid #1d70b8;';
+      }
 
       return `
         <li class="govuk-body-s" style="${rowStyle}">
-          <span style="display: flex; align-items: center;">
-            <span style="width: 16px; height: 16px; background: ${colors.fill}; border: 2px solid ${colors.stroke}; margin-right: 8px;"></span>
-            Parcel ${index + 1}: <span id="parcel-area-${index}">${areaHectares.toFixed(2)}</span> ha
-          </span>
-          <span>
-            ${editButton}
-            ${removeButton}
-          </span>
+          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+            <span style="display: flex; align-items: center;">
+              <span style="width: 16px; height: 16px; background: ${colors.fill}; border: 2px solid ${colors.stroke}; margin-right: 8px; flex-shrink: 0;"></span>
+              <a href="#" class="govuk-link" onclick="event.preventDefault(); window.SnapDrawing.selectParcel(${index})" style="text-decoration: ${isSelected ? 'none' : 'underline'}; font-weight: ${isSelected ? 'bold' : 'normal'};">${parcelName}</a>
+            </span>
+            <span id="parcel-status-${index}">${statusIndicator}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-top: 4px; margin-left: 24px;">
+            <span style="color: #505a5f;"><span id="parcel-area-${index}">${areaHectares.toFixed(2)}</span> ha</span>
+            <span>
+              ${editButton}
+              ${removeButton}
+            </span>
+          </div>
         </li>
       `;
     }).join('');
@@ -2026,6 +2118,17 @@
     } else if (editingParcelIndex > index) {
       // Adjust editing index if removing a parcel before it
       editingParcelIndex--;
+    }
+
+    // Clear selection if we're removing the selected parcel
+    if (selectedParcelIndex === index) {
+      selectedParcelIndex = -1;
+      if (onParcelSelected) {
+        onParcelSelected(-1);
+      }
+    } else if (selectedParcelIndex > index) {
+      // Adjust selection index if removing a parcel before it
+      selectedParcelIndex--;
     }
 
     const parcel = habitatParcels[index];
@@ -2500,6 +2603,145 @@
     };
   }
 
+  /**
+   * Get default BNG properties for a new parcel
+   * @returns {Object} Default BNG properties
+   */
+  function getDefaultBngProperties() {
+    return {
+      module: 'area',
+      baseline: true,
+      broadHabitat: null,
+      habitatType: null,
+      condition: null,
+      strategicSignificance: 'Low',
+      irreplaceable: false,
+      distinctiveness: null,
+      userComments: ''
+    };
+  }
+
+  /**
+   * Select a parcel for habitat attribution
+   * @param {number} index - Index of parcel to select
+   */
+  function selectParcel(index) {
+    if (index < 0 || index >= habitatParcels.length) {
+      console.warn('Invalid parcel index for selection:', index);
+      return;
+    }
+
+    // Deselect previous parcel if any
+    if (selectedParcelIndex >= 0 && selectedParcelIndex !== index) {
+      unhighlightParcel(selectedParcelIndex);
+    }
+
+    selectedParcelIndex = index;
+    highlightParcel(index);
+
+    console.log(`🎯 Parcel ${index + 1} selected for attribution`);
+
+    updateParcelsList();
+
+    if (onParcelSelected) {
+      onParcelSelected(index);
+    }
+  }
+
+  /**
+   * Deselect the currently selected parcel
+   */
+  function deselectParcel() {
+    if (selectedParcelIndex < 0) return;
+
+    const previousIndex = selectedParcelIndex;
+    unhighlightParcel(previousIndex);
+    selectedParcelIndex = -1;
+
+    console.log('🎯 Parcel deselected');
+
+    updateParcelsList();
+
+    if (onParcelSelected) {
+      onParcelSelected(-1);
+    }
+  }
+
+  /**
+   * Highlight a parcel on the map
+   * @param {number} index - Index of parcel to highlight
+   */
+  function highlightParcel(index) {
+    if (index < 0 || index >= habitatParcels.length) return;
+
+    const parcel = habitatParcels[index];
+    if (parcel.feature) {
+      parcel.feature.set('selected', true);
+      parcel.feature.changed();
+    }
+  }
+
+  /**
+   * Remove highlight from a parcel on the map
+   * @param {number} index - Index of parcel to unhighlight
+   */
+  function unhighlightParcel(index) {
+    if (index < 0 || index >= habitatParcels.length) return;
+
+    const parcel = habitatParcels[index];
+    if (parcel.feature) {
+      parcel.feature.set('selected', false);
+      parcel.feature.changed();
+    }
+  }
+
+  /**
+   * Get the currently selected parcel index
+   * @returns {number} Selected parcel index or -1 if none
+   */
+  function getSelectedParcelIndex() {
+    return selectedParcelIndex;
+  }
+
+  /**
+   * Set a BNG property on a parcel
+   * @param {number} index - Parcel index
+   * @param {string} key - Property key
+   * @param {*} value - Property value
+   */
+  function setParcelBngProperty(index, key, value) {
+    if (index < 0 || index >= habitatParcels.length) {
+      console.warn('Invalid parcel index for setParcelBngProperty:', index);
+      return;
+    }
+
+    const parcel = habitatParcels[index];
+    
+    // Initialize bng object if not present
+    if (!parcel.bng) {
+      parcel.bng = getDefaultBngProperties();
+    }
+
+    parcel.bng[key] = value;
+    console.log(`📝 Parcel ${index + 1} bng.${key} = ${value}`);
+  }
+
+  /**
+   * Get BNG properties for a parcel
+   * @param {number} index - Parcel index
+   * @returns {Object|null} BNG properties or null if invalid index
+   */
+  function getParcelBngProperties(index) {
+    if (index < 0 || index >= habitatParcels.length) {
+      return null;
+    }
+
+    const parcel = habitatParcels[index];
+    
+    // Return existing bng or default
+    return parcel.bng || getDefaultBngProperties();
+  }
+
   // Export public API
   window.SnapDrawing = {
     initSnapping: initSnapping,
@@ -2544,7 +2786,19 @@
     // Snap index source for fill tool
     getSnapIndexSource: () => snapIndexSource,
     // Add parcel from external coordinates (for fill tool)
-    addParcelFromCoordinates: addParcelFromCoordinates
+    addParcelFromCoordinates: addParcelFromCoordinates,
+    // Parcel selection for habitat attribution
+    selectParcel: selectParcel,
+    deselectParcel: deselectParcel,
+    getSelectedParcelIndex: getSelectedParcelIndex,
+    highlightParcel: highlightParcel,
+    unhighlightParcel: unhighlightParcel,
+    // BNG property management
+    setParcelBngProperty: setParcelBngProperty,
+    getParcelBngProperties: getParcelBngProperties,
+    getDefaultBngProperties: getDefaultBngProperties,
+    // UI refresh
+    updateParcelsList: updateParcelsList
   };
 
 })(window);
